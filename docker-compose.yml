@@ -1,0 +1,77 @@
+version: '3.9'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: focas-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: focas
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - focas-network
+
+  # Next.js Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: focas-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Database
+      MONGODB_URI: mongodb://admin:password123@mongodb:27017/focas?authSource=admin
+      MONGODB_DB_NAME: focas
+
+      # WATI WhatsApp
+      WATI_API_URL: https://live-mt-server.wati.io/1087297
+      WATI_TOKEN: ${WATI_TOKEN}
+      WATI_TEMPLATE_NAME: onboarding_bot
+      WATI_CHANNEL_PHONE: ${WATI_CHANNEL_PHONE}
+
+      # Zoho Bigin
+      ZOHO_CLIENT_ID: ${ZOHO_CLIENT_ID}
+      ZOHO_CLIENT_SECRET: ${ZOHO_CLIENT_SECRET}
+      ZOHO_REFRESH_TOKEN: ${ZOHO_REFRESH_TOKEN}
+      ZOHO_REGION: in
+      ZOHO_PRODUCT: bigin
+
+      # Application
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      NEXT_PUBLIC_BOT_CONTINUE_URL: https://focasedutech.com/apply
+      BUNNY_STREAM_VIDEO_ID: ${BUNNY_STREAM_VIDEO_ID}
+      BUNNY_STREAM_EMBED_URL: ${BUNNY_STREAM_EMBED_URL}
+
+      # Node environment
+      NODE_ENV: production
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+    networks:
+      - focas-network
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+
+networks:
+  focas-network:
+    driver: bridge
