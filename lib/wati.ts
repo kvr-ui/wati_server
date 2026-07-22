@@ -2,7 +2,7 @@ export async function sendWatiTemplateMessage(phone: string, name: string) {
   const baseUrl = process.env.WATI_API_URL
   const token = process.env.WATI_TOKEN
   const templateName = process.env.WATI_TEMPLATE_NAME
-  const appUrl = process.env.APP_URL || 'http://localhost:3000'
+  const appUrl = process.env.WEBSITE_URL || 'http://localhost:3100'
 
   if (!baseUrl || !token || !templateName) {
     throw new Error('WATI is not configured (WATI_API_URL / WATI_TOKEN / WATI_TEMPLATE_NAME)')

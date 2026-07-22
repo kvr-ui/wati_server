@@ -1,14 +1,19 @@
 import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { syncVslWatchTime } from '@/lib/bigin'
+import { corsHeaders } from '@/lib/cors'
 
 const eventTypes = new Set(['play_started','pause','progress','seek','milestone','completed','page_exit'])
 const BIGIN_SYNC_MILESTONES = new Set([50, 90, 100])
 
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders() })
+}
+
 export async function POST(request: Request) {
   try {
     const event = await request.json()
-    if (typeof event.leadId !== 'string' || typeof event.videoId !== 'string' || !eventTypes.has(event.eventType)) return NextResponse.json({ error: 'Invalid event' }, { status: 400 })
+    if (typeof event.leadId !== 'string' || typeof event.videoId !== 'string' || !eventTypes.has(event.eventType)) return NextResponse.json({ error: 'Invalid event' }, { status: 400, headers: corsHeaders() })
     const now = new Date()
     const db = await getDb()
     const watchedSeconds = Math.max(0, Number(event.watchedSeconds) || 0)
@@ -25,6 +30,6 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true })
-  } catch (error) { console.error('vsl event failed', error); return NextResponse.json({ error: 'Event service unavailable' }, { status: 503 }) }
+    return NextResponse.json({ ok: true }, { headers: corsHeaders() })
+  } catch (error) { console.error('vsl event failed', error); return NextResponse.json({ error: 'Event service unavailable' }, { status: 503, headers: corsHeaders() }) }
 }

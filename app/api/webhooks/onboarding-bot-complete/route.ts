@@ -98,8 +98,8 @@ export async function POST(request: Request) {
     if (!isTemplateVariable && phone) {
       try {
         // Build personalized VSL tracking link with phone parameter
-        const appUrl = process.env.APP_URL || 'http://localhost:3000'
-        const vslLink = `${appUrl}/vsl?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`
+        const websiteUrl = process.env.WEBSITE_URL || 'http://localhost:3100'
+        const vslLink = `${websiteUrl}/vsl?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`
 
         // Create personalized message
         const messageText = `Hi ${name},\n\nThank you for completing the onboarding! 🎉\n\nWe've prepared a personalized video just for you. Click the link below to watch:\n\n${vslLink}\n\nLooking forward to discussing this with you!`
