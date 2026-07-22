@@ -7,6 +7,9 @@ let promise: Promise<MongoClient> | undefined
 export async function getDb() {
   if (!uri) throw new Error('MONGODB_URI is not configured')
   client ??= new MongoClient(uri)
-  promise ??= client.connect()
+  promise ??= client.connect().then((c) => {
+    console.log('✅ MongoDB connected:', process.env.MONGODB_DB_NAME || 'focas')
+    return c
+  })
   return (await promise).db(process.env.MONGODB_DB_NAME || 'focas')
 }

@@ -1,5 +1,5 @@
 # Build stage
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
@@ -16,29 +16,27 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM node:22-alpine
+FROM node:22-slim
 
 WORKDIR /app
 
 # Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+RUN apt-get update && apt-get install -y --no-install-recommends dumb-init && rm -rf /var/lib/apt/lists/*
 
-# Copy package files
-COPY package*.json ./
+ENV NODE_ENV=production
 
-# Install only production dependencies
-RUN npm ci --only=production
-
-# Copy built app from builder
+# Copy everything needed to run `next start` (node_modules included,
+# since this project isn't built with output: 'standalone')
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY app ./app
+COPY --from=builder /app/app ./app
+COPY --from=builder /app/lib ./lib
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/next.config.ts ./
+COPY --from=builder /app/tsconfig.json ./
 
-# Expose port
 EXPOSE 3000
 
-# Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 
-# Start the app
 CMD ["npm", "start"]
