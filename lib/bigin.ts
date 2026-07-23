@@ -53,16 +53,28 @@ export async function syncVslWatchTime(phone: string, watchedSeconds: number, wa
   const pct = Math.round(watchPercentage)
   const when = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
   const content = `VSL watch time: ${minutes} min (${pct}%) as of ${when}`
-  if (noteId) { await updateNoteInContact(contactId, noteId, content); return noteId }
-  const data = await addNoteToContact(contactId, content)
-  return (data?.data?.[0]?.details?.id as string | undefined) || undefined
+  return upsertNote(contactId, noteId, content)
 }
 
-export async function updateNoteInContact(contactId: string, noteId: string, content: string) {
-  const res = await biginFetch(`/bigin/v2/Contacts/${contactId}/Notes/${noteId}`, { method: 'PUT', body: JSON.stringify({ data: [{ Note_Content: content }] }) })
+// Note updates go to the top-level Notes resource (PUT /Notes/{id}); the parented
+// path /Contacts/{contactId}/Notes/{noteId} is only valid for creating notes, not updating.
+export async function updateNote(noteId: string, content: string) {
+  const res = await biginFetch(`/bigin/v2/Notes/${noteId}`, { method: 'PUT', body: JSON.stringify({ data: [{ Note_Content: content }] }) })
   const data = await res.json().catch(() => null)
   if (!res.ok) throw new Error(`Bigin update note failed: ${res.status} ${JSON.stringify(data)}`)
   return data
+}
+
+// Updates the existing note if noteId is set, otherwise creates one. If the update fails
+// (stale/deleted note id, e.g. from another environment) it self-heals by creating a fresh
+// note and returning its id so the caller can cache the new value.
+async function upsertNote(contactId: string, noteId: string | undefined, content: string) {
+  if (noteId) {
+    try { await updateNote(noteId, content); return noteId }
+    catch (error) { console.error('Bigin note update failed, creating a new note', error) }
+  }
+  const data = await addNoteToContact(contactId, content)
+  return (data?.data?.[0]?.details?.id as string | undefined) || undefined
 }
 
 // Writes the visitor's time-on-site to the Bigin contact as ONE note per session.
@@ -71,7 +83,5 @@ export async function updateNoteInContact(contactId: string, noteId: string, con
 export async function syncSiteSession(phone: string, noteId: string | undefined, content: string) {
   const contactId = await findContactIdByPhone(phone)
   if (!contactId) return noteId
-  if (noteId) { await updateNoteInContact(contactId, noteId, content); return noteId }
-  const data = await addNoteToContact(contactId, content)
-  return (data?.data?.[0]?.details?.id as string | undefined) || undefined
+  return upsertNote(contactId, noteId, content)
 }
