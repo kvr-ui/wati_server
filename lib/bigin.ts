@@ -51,3 +51,21 @@ export async function syncVslWatchTime(phone: string, watchedSeconds: number, wa
   const when = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
   await addNoteToContact(contactId, `VSL watch time: ${minutes} min (${pct}%) as of ${when}`)
 }
+
+export async function updateNoteInContact(contactId: string, noteId: string, content: string) {
+  const res = await biginFetch(`/bigin/v2/Contacts/${contactId}/Notes/${noteId}`, { method: 'PUT', body: JSON.stringify({ data: [{ Note_Content: content }] }) })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(`Bigin update note failed: ${res.status} ${JSON.stringify(data)}`)
+  return data
+}
+
+// Writes the visitor's time-on-site to the Bigin contact as ONE note per session.
+// First call creates the note (returns its id); later calls update the same note so the
+// minutes keep growing in place instead of spamming a new note on every exit.
+export async function syncSiteSession(phone: string, noteId: string | undefined, content: string) {
+  const contactId = await findContactIdByPhone(phone)
+  if (!contactId) return noteId
+  if (noteId) { await updateNoteInContact(contactId, noteId, content); return noteId }
+  const data = await addNoteToContact(contactId, content)
+  return (data?.data?.[0]?.details?.id as string | undefined) || undefined
+}
