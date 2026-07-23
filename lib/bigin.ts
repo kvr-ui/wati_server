@@ -43,13 +43,19 @@ export async function addNoteToContact(contactId: string, content: string) {
   return data
 }
 
-export async function syncVslWatchTime(phone: string, watchedSeconds: number, watchPercentage: number) {
+// Writes VSL watch time to the Bigin contact as ONE note per session, keyed by phone number.
+// First call creates the note (returns its id); later calls update the same note so the
+// watched time keeps growing in place instead of spamming a new note on every progress tick.
+export async function syncVslWatchTime(phone: string, watchedSeconds: number, watchPercentage: number, noteId?: string) {
   const contactId = await findContactIdByPhone(phone)
-  if (!contactId) return
+  if (!contactId) return noteId
   const minutes = (watchedSeconds / 60).toFixed(1)
   const pct = Math.round(watchPercentage)
   const when = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
-  await addNoteToContact(contactId, `VSL watch time: ${minutes} min (${pct}%) as of ${when}`)
+  const content = `VSL watch time: ${minutes} min (${pct}%) as of ${when}`
+  if (noteId) { await updateNoteInContact(contactId, noteId, content); return noteId }
+  const data = await addNoteToContact(contactId, content)
+  return (data?.data?.[0]?.details?.id as string | undefined) || undefined
 }
 
 export async function updateNoteInContact(contactId: string, noteId: string, content: string) {

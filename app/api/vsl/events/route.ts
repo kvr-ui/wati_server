@@ -4,7 +4,7 @@ import { syncVslWatchTime } from '@/lib/bigin'
 import { corsHeaders } from '@/lib/cors'
 
 const eventTypes = new Set(['play_started','pause','progress','seek','milestone','completed','page_exit'])
-const BIGIN_SYNC_MILESTONES = new Set([50, 90, 100])
+const BIGIN_SYNC_EVENTS = new Set(['progress', 'milestone', 'completed', 'page_exit'])
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders() })
@@ -21,12 +21,13 @@ export async function POST(request: Request) {
     await db.collection('vsl_events').insertOne({ ...event, currentTime: Math.max(0, Number(event.currentTime) || 0), videoDuration: Math.max(0, Number(event.videoDuration) || 0), watchedSeconds, receivedAt: now })
     await db.collection('vsl_leads').updateOne({ leadId: event.leadId }, { $set: { lastActivityAt: now, lastEventType: event.eventType, watchedSeconds, watchPercentage } })
 
-    const shouldSyncToBigin = event.eventType === 'page_exit' || (event.eventType === 'milestone' && BIGIN_SYNC_MILESTONES.has(Number(event.milestone)))
-    if (shouldSyncToBigin && watchedSeconds > 0) {
-      const lead = await db.collection('vsl_leads').findOne({ leadId: event.leadId }, { projection: { phone: 1 } })
+    if (BIGIN_SYNC_EVENTS.has(event.eventType) && watchedSeconds > 0) {
+      const lead = await db.collection('vsl_leads').findOne({ leadId: event.leadId }, { projection: { phone: 1, vslNoteId: 1 } })
       if (lead?.phone) {
-        try { await syncVslWatchTime(lead.phone, watchedSeconds, watchPercentage) }
-        catch (error) { console.error('Bigin watch-time sync failed', error) }
+        try {
+          const noteId = await syncVslWatchTime(lead.phone, watchedSeconds, watchPercentage, lead.vslNoteId)
+          if (noteId && noteId !== lead.vslNoteId) await db.collection('vsl_leads').updateOne({ leadId: event.leadId }, { $set: { vslNoteId: noteId } })
+        } catch (error) { console.error('Bigin watch-time sync failed', error) }
       }
     }
 
