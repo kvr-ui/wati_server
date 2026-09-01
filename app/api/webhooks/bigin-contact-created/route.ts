@@ -19,8 +19,13 @@ export async function POST(request: Request) {
   const rawPhone = typeof rawPhoneValue === 'string' ? rawPhoneValue : ''
   const phone = rawPhone.replace(/[^\d]/g, '').slice(0, 15)
 
-  if (name.length < 2 || !/^\d{8,15}$/.test(phone)) {
-    return NextResponse.json({ error: 'Invalid name or phone' }, { status: 400 })
+  // WhatsApp push-names are frequently a single character or an emoji, and the name only
+  // fills {{1}} in the template. Fall back to a neutral greeting rather than dropping an
+  // otherwise valid lead — the phone number is the part that has to be right.
+  const greetingName = name.length >= 2 ? name : 'there'
+
+  if (!/^\d{8,15}$/.test(phone)) {
+    return NextResponse.json({ error: 'Invalid phone' }, { status: 400 })
   }
 
   try {
@@ -42,7 +47,7 @@ export async function POST(request: Request) {
     )
 
     // Send initial onboarding bot template message
-    await sendWatiTemplateMessage(phone, name)
+    await sendWatiTemplateMessage(phone, greetingName)
 
     return NextResponse.json({ success: true, message: 'Contact stored and onboarding bot message sent' })
   } catch (error) {
