@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { resolveLead } from '@/lib/leads'
 import { normalizePhone } from '@/lib/phone'
+import { sendTrackedVslLink } from '@/lib/vslSend'
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -94,57 +95,20 @@ export async function POST(request: Request) {
       }
     )
 
-    // 5. Send personalized thank-you message with VSL link via WATI session message (only if we have valid phone)
+    // 5. Send the VSL link through the tracked sender, so the send is recorded and the
+    // non-opener reminder gets scheduled. Sending it inline here (as this route used to)
+    // delivered the message but left no linkSentAt, so no reminder could ever fire.
     const isTemplateVariable = name.includes('{{') || name.includes('@') || phone.includes('{{') || phone.includes('@')
 
-    if (!isTemplateVariable && phone) {
+    if (!isTemplateVariable && normalizedPhone) {
       try {
-        // Build personalized VSL tracking link with phone parameter
-        const websiteUrl = process.env.WEBSITE_URL || 'http://localhost:3100'
-        const vslLink = `${websiteUrl}/vsl?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`
-
-        // Create personalized message
-        const messageText = `Hi ${name},\n\nThank you for completing the onboarding! 🎉\n\nWe've prepared a personalized video just for you. Click the link below to watch:\n\n${vslLink}\n\nLooking forward to discussing this with you!`
-
-        console.log('📤 Sending thank-you message via WATI session message to:', phone)
-
-        // Get channel phone from env or use a default
-        const channelPhone = process.env.WATI_CHANNEL_PHONE || '916383514285'
-
-        // Use WATI session message endpoint
-        const watiUrl = `${process.env.WATI_API_URL}/api/v1/sendSessionMessage/${phone}?messageText=${encodeURIComponent(messageText)}&channelPhoneNumber=${channelPhone}`
-
-        const watiResponse = await fetch(watiUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.WATI_TOKEN}`,
-          },
-        })
-
-        const watiData = await watiResponse.json().catch(() => null)
-
-        console.log('WATI Response:', { status: watiResponse.status, data: watiData })
-
-        if (!watiResponse.ok) {
-          console.error('❌ WATI send failed:', {
-            status: watiResponse.status,
-            response: watiData,
-          })
-          throw new Error(`WATI API error: ${watiResponse.status}`)
-        }
-
-        // Check if message was actually sent (result: true) or ticket expired (result: false)
-        if (watiData?.result === false) {
-          console.warn('⚠️ WATI message queued but ticket expired:', watiData?.message)
-          console.warn('Note: Message will be sent when user responds or session is active')
-        } else {
-          console.log('✅ Thank you message with VSL link sent via WATI to:', phone)
-        }
+        const result = await sendTrackedVslLink(normalizedPhone, name)
+        console.log('VSL link send:', { phone: normalizedPhone, ...result })
       } catch (error) {
-        console.error('❌ Failed to send thank you message via WATI:', error)
+        console.error('Failed to send VSL link', error)
       }
     } else {
-      console.log('Skipped WATI message send - no valid phone')
+      console.log('Skipped VSL link send - no valid phone')
     }
 
     return NextResponse.json({
