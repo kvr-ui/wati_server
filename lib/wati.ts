@@ -93,7 +93,11 @@ export function buildVslUrl(phone: string, name?: string) {
 }
 
 function renderMessage(template: string, name: string, url: string) {
-  return template.replace(/\{\{\s*name\s*\}\}/g, name || 'there').replace(/\{\{\s*url\s*\}\}/g, url)
+  // Env files cannot hold real newlines, so copy is written with literal \n and unescaped here.
+  return template
+    .replace(/\\n/g, '\n')
+    .replace(/\{\{\s*name\s*\}\}/g, name || 'there')
+    .replace(/\{\{\s*url\s*\}\}/g, url)
 }
 
 export async function sendSessionMessage(phone: string, text: string): Promise<SendOutcome> {

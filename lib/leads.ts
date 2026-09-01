@@ -3,6 +3,17 @@ import { getDb } from './mongodb'
 
 export type ResolvedLead = { leadId: string; name: string }
 
+// Filtering on 'due' means this cannot clobber 'claimed' or 'sent' — a lead who engages long
+// after the fact must not erase the record that a reminder already went out.
+export async function cancelPendingReminder(match: { phone?: string; leadId?: string }) {
+  const db = await getDb()
+  const filter = match.phone ? { phone: match.phone } : { leadId: match.leadId }
+  await db.collection('vsl_leads').updateOne(
+    { ...filter, reminderState: 'due' },
+    { $set: { reminderState: 'cancelled', reminderCancelledAt: new Date() } },
+  )
+}
+
 // Called when a lead actually opens the VSL page. This is the "opened" signal the reminder
 // job keys on, so it must never disturb what the send path recorded.
 //
@@ -43,13 +54,10 @@ export async function resolveLead(phone: string, name?: string): Promise<Resolve
     { upsert: true, returnDocument: 'after' },
   )
 
-  // Cancel a pending reminder as a separate, narrowly filtered update. Filtering on 'due'
-  // means an open cannot clobber 'claimed' or 'sent' — a lead who opens 30 hours later must
-  // not erase the record that a reminder already went out.
-  await leads.updateOne(
-    { phone, reminderState: 'due' },
-    { $set: { reminderState: 'cancelled', reminderCancelledAt: now } },
-  )
+  // Whether merely OPENING the page is enough to call off the reminder, or whether the lead
+  // has to actually press play. The reminder copy says "you didn't watch the video", so the
+  // default is 'play' — opening and bouncing should still be chased.
+  if ((process.env.VSL_REMINDER_CANCEL_ON || 'play') === 'open') await cancelPendingReminder({ phone })
 
   return { leadId: String(doc?.leadId || ''), name: String(doc?.name || '') }
 }

@@ -53,10 +53,14 @@ export async function runVslReminderBatch(options: { dryRun?: boolean } = {}): P
   const db = await getDb()
   const leads = db.collection('vsl_leads')
 
+  // The field that proves engagement, and so disqualifies a lead from being chased.
+  // 'play' (default) => they must have pressed play; 'open' => loading the page is enough.
+  const engagedField = (process.env.VSL_REMINDER_CANCEL_ON || 'play') === 'open' ? 'firstOpenedAt' : 'firstPlayAt'
+
   const due = {
     reminderState: 'due',
     reminderDueAt: { $lte: now },
-    firstOpenedAt: { $exists: false },
+    [engagedField]: { $exists: false },
     reminderSentAt: { $exists: false },
   }
 
@@ -89,16 +93,16 @@ export async function runVslReminderBatch(options: { dryRun?: boolean } = {}): P
     if (!lead) break
     result.claimed++
 
-    // Close the claim-to-send race: the lead may have opened the page in the last few
-    // milliseconds, in which case the cancel update could not match 'claimed'.
-    const fresh = await leads.findOne({ _id: lead._id }, { projection: { firstOpenedAt: 1 } })
-    if (fresh?.firstOpenedAt) {
+    // Close the claim-to-send race: the lead may have engaged in the last few milliseconds,
+    // in which case the cancel update could not match 'claimed'.
+    const fresh = await leads.findOne({ _id: lead._id }, { projection: { [engagedField]: 1 } })
+    if (fresh?.[engagedField]) {
       await leads.updateOne(
         { _id: lead._id, reminderState: 'claimed' },
         { $set: { reminderState: 'cancelled', reminderCancelledAt: new Date() } },
       )
       result.cancelled++
-      result.leads.push({ phone: String(lead.phone), leadId: String(lead.leadId), outcome: 'cancelled-opened' })
+      result.leads.push({ phone: String(lead.phone), leadId: String(lead.leadId), outcome: 'cancelled-engaged' })
       continue
     }
 

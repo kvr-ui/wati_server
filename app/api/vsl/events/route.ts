@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { syncVslWatchTime } from '@/lib/bigin'
+import { cancelPendingReminder } from '@/lib/leads'
 import { corsHeaders } from '@/lib/cors'
 
 const eventTypes = new Set(['play_started','pause','progress','seek','milestone','completed','page_exit'])
@@ -29,6 +30,9 @@ export async function POST(request: Request) {
         ...(event.eventType === 'play_started' ? { $min: { firstPlayAt: now } } : {}),
       },
     )
+
+    // Pressing play calls off the reminder under either cancel mode.
+    if (event.eventType === 'play_started') await cancelPendingReminder({ leadId: event.leadId })
 
     if (BIGIN_SYNC_EVENTS.has(event.eventType) && watchedSeconds > 0) {
       const lead = await db.collection('vsl_leads').findOne({ leadId: event.leadId }, { projection: { phone: 1, vslNoteId: 1 } })

@@ -23,6 +23,10 @@ function authorized(request: Request) {
 // free-form message is allowed. At 24h the window has closed and only a paid, Meta-approved
 // template would go through.
 function reminderDelayMs() {
+  // Minutes win when set, so the delay can be dialled down to seconds-scale for testing
+  // without touching the 23h production default.
+  const minutes = Number(process.env.VSL_REMINDER_DELAY_MINUTES)
+  if (Number.isFinite(minutes) && minutes >= 0) return minutes * 60_000
   const hours = Number(process.env.VSL_REMINDER_DELAY_HOURS)
   return (Number.isFinite(hours) && hours >= 0 ? hours : 23) * 3600_000
 }
