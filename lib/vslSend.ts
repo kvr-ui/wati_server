@@ -14,6 +14,14 @@ export type VslSendResult = {
 
 const MAX_SEND_ATTEMPTS = 3
 
+// A lead who completes the onboarding bot again should get the link again. Only sends inside
+// this cooldown are suppressed — that is the window where a duplicate almost certainly means
+// a webhook retry rather than a person genuinely going through the flow a second time.
+function resendCooldownMs() {
+  const hours = Number(process.env.VSL_RESEND_AFTER_HOURS)
+  return (Number.isFinite(hours) && hours >= 0 ? hours : 24) * 3600_000
+}
+
 // Minutes win when set, so the delay can be dialled down for testing without disturbing the
 // production default.
 function reminderDelayMs() {
@@ -52,14 +60,18 @@ export async function sendTrackedVslLink(phone: string, name: string): Promise<V
   // Claim before sending. One atomic document operation is the whole idempotency guarantee:
   // whichever caller wins sends, everyone else is told it is already done. This absorbs a
   // webhook retry.
+  const resendCutoff = new Date(now.getTime() - resendCooldownMs())
   const claimed = await leads.findOneAndUpdate(
     {
       phone,
-      linkSentAt: { $exists: false },
       linkClaimedAt: { $exists: false },
-      // The document may have been created by resolveLead (an open before any send), which
-      // does not seed linkSendAttempts — and $lt never matches a missing field.
-      $or: [{ linkSendAttempts: { $exists: false } }, { linkSendAttempts: { $lt: MAX_SEND_ATTEMPTS } }],
+      $and: [
+        // The document may have been created by resolveLead (an open before any send), which
+        // does not seed linkSendAttempts — and $lt never matches a missing field.
+        { $or: [{ linkSendAttempts: { $exists: false } }, { linkSendAttempts: { $lt: MAX_SEND_ATTEMPTS } }] },
+        // Never sent, or last sent long enough ago that this is a real second run.
+        { $or: [{ linkSentAt: { $exists: false } }, { linkSentAt: { $lt: resendCutoff } }] },
+      ],
     },
     { $set: { linkClaimedAt: now, linkSendStatus: 'sending', ...(name ? { name } : {}) }, $inc: { linkSendAttempts: 1 } },
     { returnDocument: 'after' },
@@ -100,7 +112,9 @@ export async function sendTrackedVslLink(phone: string, name: string): Promise<V
   await leads.updateOne(
     { phone },
     {
-      $set: { linkSentAt: sentAt, linkSendStatus: 'sent', reminderState: 'due', reminderDueAt },
+      // linkSendAttempts counts CONSECUTIVE failures, so a success clears it — otherwise a
+      // lead who legitimately receives the link three times could never be sent it again.
+      $set: { linkSentAt: sentAt, linkSendStatus: 'sent', reminderState: 'due', reminderDueAt, linkSendAttempts: 0 },
       $max: { lastActivityAt: sentAt },
       $unset: { linkClaimedAt: '' },
     },
