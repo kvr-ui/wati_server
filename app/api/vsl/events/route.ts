@@ -19,7 +19,16 @@ export async function POST(request: Request) {
     const watchedSeconds = Math.max(0, Number(event.watchedSeconds) || 0)
     const watchPercentage = Number(event.watchPercentage) || 0
     await db.collection('vsl_events').insertOne({ ...event, currentTime: Math.max(0, Number(event.currentTime) || 0), videoDuration: Math.max(0, Number(event.videoDuration) || 0), watchedSeconds, receivedAt: now })
-    await db.collection('vsl_leads').updateOne({ leadId: event.leadId }, { $set: { lastActivityAt: now, lastEventType: event.eventType, watchedSeconds, watchPercentage } })
+    // $max on lastActivityAt so a delayed beacon cannot rewind it; $min on firstPlayAt so the
+    // earliest play wins (the button handler and the Player.js 'play' event both fire one).
+    await db.collection('vsl_leads').updateOne(
+      { leadId: event.leadId },
+      {
+        $set: { lastEventType: event.eventType, watchedSeconds, watchPercentage },
+        $max: { lastActivityAt: now },
+        ...(event.eventType === 'play_started' ? { $min: { firstPlayAt: now } } : {}),
+      },
+    )
 
     if (BIGIN_SYNC_EVENTS.has(event.eventType) && watchedSeconds > 0) {
       const lead = await db.collection('vsl_leads').findOne({ leadId: event.leadId }, { projection: { phone: 1, vslNoteId: 1 } })

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { resolveLead } from '@/lib/leads'
+import { normalizePhone } from '@/lib/phone'
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -64,7 +65,8 @@ export async function POST(request: Request) {
     const now = new Date()
 
     // 2. Resolve lead (create/update in vsl_leads)
-    const leadId = await resolveLead(name, phone)
+    const normalizedPhone = normalizePhone(phone)
+    const leadId = normalizedPhone ? (await resolveLead(normalizedPhone, name)).leadId : ''
 
     // 3. Store/update onboarding bot answers in MongoDB (upsert to prevent duplicates)
     await db.collection('onboarding_responses').updateOne(
