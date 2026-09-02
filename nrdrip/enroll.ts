@@ -50,8 +50,10 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
   // below, which already absorbs repeats: a repeat while active is `already_active`, and a
   // repeat after the drip ended is `cooldown`.
 
-  // Sales reached them. Chasing someone who has already had the conversation is worse than
-  // not chasing at all.
+  // The lead now carries a different tag, so they belong to that tag's campaign rather than
+  // this one. We cannot tell from here whether it means sales connected, the lead was closed,
+  // or something else — only that they are no longer NR — so the reason records the fact
+  // (the tag changed) rather than guessing at intent.
   if (!call.isNoResponse) {
     if (!cancelOnConnected()) {
       await drips.updateOne({ phone }, { $set: { lastCallAt: now }, ...addCallId })
@@ -60,7 +62,7 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
     const res = await drips.updateOne(
       { phone, state: { $in: ACTIVE_STATES } },
       {
-        $set: { state: 'cancelled', cancelledAt: now, cancelReason: 'call_connected', lastCallAt: now },
+        $set: { state: 'cancelled', cancelledAt: now, cancelReason: 'tag_changed', lastCallAt: now },
         $unset: { claimedAt: '' },
         ...addCallId,
       },

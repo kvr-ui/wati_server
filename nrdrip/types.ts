@@ -47,7 +47,7 @@ export type NrDripDoc = {
   lastCallAt?: Date
 }
 
-export type NrDripCancelReason = 'replied' | 'call_connected' | 'manual'
+export type NrDripCancelReason = 'replied' | 'tag_changed' | 'tag_removed' | 'manual'
 
 // What the Bigin webhook told us about one call.
 export type CallOutcome = {

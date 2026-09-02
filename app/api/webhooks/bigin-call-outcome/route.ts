@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { normalizePhone } from '@/lib/phone'
 import { isNoResponseOutcome } from '@/nrdrip/config'
-import { enrollFromCallOutcome } from '@/nrdrip/enroll'
+import { cancelDrip, enrollFromCallOutcome } from '@/nrdrip/enroll'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -83,6 +83,10 @@ export async function POST(request: Request) {
   console.log(`${TAG} content-type: ${contentType}`)
   console.log(`${TAG} raw body: ${raw.slice(0, RAW_LOG_LIMIT)}${raw.length > RAW_LOG_LIMIT ? ` …(${raw.length} bytes total)` : ''}`)
 
+  // Zoho pings the URL with an empty body to validate it before letting you save the webhook.
+  // Answering anything but 2xx there makes it retry and refuse the configuration.
+  if (!raw.trim()) return reply(200, { success: true, action: 'ignored', detail: 'empty body (validation ping)' })
+
   const body = parseBody(raw, contentType)
   if (!body) return reply(400, { error: 'Body is neither JSON nor form-encoded', raw: raw.slice(0, 500) })
 
@@ -108,10 +112,31 @@ export async function POST(request: Request) {
 
   console.log(`${TAG} extracted:`, JSON.stringify({ phone, name, outcome, callId }))
 
-  // Both failures name the keys that were actually present, which is what tells you which field
-  // the flow needs to be remapped to.
-  if (!phone) return reply(400, { error: 'Invalid or missing phone', receivedKeys: Object.keys(body) })
-  if (!outcome) return reply(400, { error: 'Missing call outcome', receivedKeys: Object.keys(body) })
+  // Acknowledged, not rejected. This webhook fires on EVERY tag change on a contact — including
+  // a tag being REMOVED, which legitimately arrives with an empty Tag array. That is nothing to
+  // act on rather than a failure, and Zoho would otherwise mark the whole run failed and retry.
+  //
+  // The tradeoff: a genuinely misconfigured flow (wrong field mapped, so no phone ever arrives)
+  // now looks successful from Zoho's side. `detail` and `receivedKeys` in the response body are
+  // where that shows up, so read the body rather than trusting the status code alone.
+  if (!phone) {
+    console.warn(`${TAG} no usable phone — nothing to do`)
+    return reply(200, { success: true, action: 'ignored', detail: 'no usable phone in payload', receivedKeys: Object.keys(body) })
+  }
+  // No tag on the contact. The drip only runs while the lead is STILL marked NR, and this flow
+  // fires on tag removal too — so an empty tag on someone mid-drip means sales took the mark
+  // off, and the chase stops. For everyone else there is no active drip and this is a no-op.
+  if (!outcome) {
+    const stopped = await cancelDrip(phone, 'tag_removed')
+    console.log(`${TAG} contact has no tag — ${stopped ? 'active drip cancelled' : 'nothing to do'}`)
+    return reply(200, {
+      success: true,
+      action: stopped ? 'cancelled' : 'ignored',
+      detail: stopped ? 'NR tag removed, drip stopped' : 'contact has no tag',
+      phone,
+      receivedKeys: Object.keys(body),
+    })
+  }
 
   const isNoResponse = isNoResponseOutcome(outcome)
   console.log(`${TAG} outcome "${outcome}" -> ${isNoResponse ? 'NOT REACHED (enrol)' : 'reached / other (no drip)'}`)

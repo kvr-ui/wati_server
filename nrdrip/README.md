@@ -4,8 +4,8 @@ A WhatsApp drip for leads the sales team **could not reach**.
 
 The VSL funnel ends when the lead watches the video and is handed to sales. If sales calls and
 nobody answers, nothing used to happen. NR DRIP fills that gap: Bigin reports the call outcome,
-and a lead marked *not reachable* is enrolled in a four-message sequence over **Day 0 / 1 / 3 / 6**
-that stops the moment they reply.
+and a lead tagged `NR` is enrolled in a three-message sequence over **Day 0 / 1 / 3** that
+stops the moment they reply, are reached, or have the tag taken off.
 
 Self-contained: everything except the two HTTP routes lives in this folder. It reuses
 `lib/wati.ts` for sending, `lib/phone.ts` for normalisation, and the same claim-before-send
@@ -20,8 +20,10 @@ replied, which cancels the drip. So the session-message path is opportunistic on
 templates are what actually deliver. With `NR_DRIP_ENABLED=true` and no templates configured,
 leads simply park as `window_closed`.
 
-Get four templates approved with variables drawn from `{{name}}`, `{{phone}}`, `{{url}}`, then
-set `NR_DRIP_TEMPLATE_1..4`.
+Get three templates approved and set `NR_DRIP_TEMPLATE_1..3`. Declare each template's real
+variables with `NR_DRIP_TEMPLATE_PARAMS_n` — the default is `name`, and `none` is how a step
+says the template takes no variables at all (as `re_nurture` does). Sending a variable a
+template does not declare risks the message being rejected.
 
 ## Flow
 
@@ -32,7 +34,8 @@ Bigin call logged
 POST /api/webhooks/bigin-call-outcome     (unauthenticated)
       │
       ├─ call id already seen ──────────────────► no-op (Zoho Flow replay)
-      ├─ outcome not in NR_DRIP_NR_OUTCOMES ────► cancel active drip ("call_connected")
+      ├─ no tag at all (tag removed) ───────────► cancel active drip ("tag_removed")
+      ├─ outcome not in NR_DRIP_NR_OUTCOMES ────► cancel active drip ("tag_changed")
       ├─ drip already active ───────────────────► record the extra attempt, keep the schedule
       ├─ finished within the re-enrol cooldown ─► no-op
       └─ otherwise ─────────────────────────────► enrol: state=due, step=0, dueAt=now
@@ -53,7 +56,7 @@ never compresses the sequence — steps land on their absolute schedule instead 
 
 `due` → `claimed` → `due` (next step) → … → `completed`
 
-Terminal states: `completed`, `cancelled` (replied / call_connected / manual), `failed`
+Terminal states: `completed`, `cancelled` (replied / tag_changed / tag_removed / manual), `failed`
 (known-undelivered, out of attempts), `unknown` (ambiguous send — parked, never auto-retried),
 `window_closed` (no template for that step), `stuck` (claim stranded by a crash).
 
@@ -64,10 +67,11 @@ Terminal states: `completed`, `cancelled` (replied / call_connected / manual), `
 | `NR_DRIP_ENABLED` | `false` | Master switch. Nothing sends unless `true`. |
 | `NR_DRIP_NR_OUTCOMES` | — | Comma-separated outcomes that mean "not reached", case-insensitive. Empty = nothing ever enrols. |
 | `NR_DRIP_CANCEL_ON_CONNECTED` | `true` | A non-NR outcome cancels an active drip. `false` = reply-only cancellation. |
-| `NR_DRIP_STEP_OFFSETS` | `0,24,72,144` | Hours from enrolment per step. Length sets the step count. |
+| `NR_DRIP_STEP_OFFSETS` | `0,24,72` | Hours from enrolment per step. Length sets the step count. A step with no template parks the lead in `window_closed`, which is terminal — so shorten this rather than leaving a step unconfigured. |
 | `NR_DRIP_STEP_OFFSETS_MINUTES` | — | Overrides the above. Testing only. |
-| `NR_DRIP_MESSAGE_1..4` | — | Session copy per step. Supports `{{name}}`, `{{url}}`, literal `\n`. |
-| `NR_DRIP_TEMPLATE_1..4` | — | Approved template name per step. Required in practice. |
+| `NR_DRIP_MESSAGE_1..3` | — | Session copy per step. Leave empty to always use the template. Supports `{{name}}`, `{{url}}`, literal `\n`. |
+| `NR_DRIP_TEMPLATE_1..3` | — | Approved template name per step. Required in practice. |
+| `NR_DRIP_TEMPLATE_PARAMS_1..3` | `name` | Variables to send with that step's template. `none` for a template with no variables. |
 | `NR_DRIP_URL` | the lead's VSL link | Where the copy points — usually a booking/callback page. |
 | `NR_DRIP_REENROLL_AFTER_HOURS` | `168` | A finished drip cannot restart inside this window. |
 | `NR_DRIP_QUIET_START_IST` | `21` | Quiet hours begin (Asia/Kolkata). |

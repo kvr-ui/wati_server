@@ -42,7 +42,7 @@ export function isNoResponseOutcome(outcome: string) {
   return present.some((value) => wanted.includes(value))
 }
 
-// Hours from enrolment at which each step fires — Day 0 / 1 / 3 / 6 by default.
+// Hours from enrolment at which each step fires — Day 0 / 1 / 3 by default.
 // The minutes variant wins when set, so the cadence can be compressed for testing without
 // disturbing the production values.
 export function stepOffsetsMs(): number[] {
@@ -52,7 +52,7 @@ export function stepOffsetsMs(): number[] {
   const hours = list('NR_DRIP_STEP_OFFSETS').map(Number).filter((n) => Number.isFinite(n) && n >= 0)
   if (hours.length) return hours.map((h) => h * 3600_000)
 
-  return [0, 24, 72, 144].map((h) => h * 3600_000)
+  return [0, 24, 72].map((h) => h * 3600_000)
 }
 
 export function stepCount() {
@@ -83,7 +83,12 @@ export function stepTemplate(index: number): string | undefined {
 // really takes more.
 export function stepTemplateParams(index: number): string[] {
   const configured = list(`NR_DRIP_TEMPLATE_PARAMS_${index + 1}`)
-  return configured.length ? configured : ['name']
+  if (!configured.length) return ['name']
+  // Some approved templates take no variables at all (re_nurture), and sending one anyway can
+  // get the message rejected. "none" is how a step says that explicitly, since an empty env
+  // value is indistinguishable from an unset one.
+  if (configured.length === 1 && configured[0].toLowerCase() === 'none') return []
+  return configured
 }
 
 export function reenrollCooldownMs() {
