@@ -1,8 +1,8 @@
 import { getDb } from '@/lib/mongodb'
-import { CAMPAIGN, COLLECTION, cancelOnTagChange, dueAtForStep, reenrollCooldownMs } from './config'
-import type { CallOutcome, EnrollResult, NrDripCancelReason, NrDripState } from './types'
+import type { DripConfig } from './config'
+import type { DripCancelReason, DripState, EnrollResult, TagOutcome } from './types'
 
-const ACTIVE_STATES: NrDripState[] = ['due', 'claimed']
+const ACTIVE_STATES: DripState[] = ['due', 'claimed']
 
 // What we copy off the lead at enrolment, so the drip can personalise its copy and so
 // Followup_dashboard can report on it without a join.
@@ -32,25 +32,26 @@ function dripEndedAt(doc: Record<string, unknown>): Date | undefined {
   return undefined
 }
 
-// Ends a drip early. Used by the runner when the lead replies, and by the webhook when sales
-// finally connects. Only matches an active drip, so it can never resurrect or overwrite a
+// Ends a drip early. Used by the runner when the lead replies, and by the webhook when the
+// trigger tag comes off. Only matches an active drip, so it can never resurrect or overwrite a
 // sequence that already reached a terminal state.
-export async function cancelDrip(phone: string, reason: NrDripCancelReason) {
+export async function cancelDrip(cfg: DripConfig, phone: string, reason: DripCancelReason) {
   const db = await getDb()
-  const res = await db.collection(COLLECTION).updateOne(
+  const res = await db.collection(cfg.campaign.collection).updateOne(
     { phone, state: { $in: ACTIVE_STATES } },
     { $set: { state: 'cancelled', cancelledAt: new Date(), cancelReason: reason }, $unset: { claimedAt: '' } },
   )
   return res.modifiedCount > 0
 }
 
-// The single entry point for everything the Bigin call webhook reports.
+// The single entry point for everything the Bigin tag webhook reports about ONE campaign.
 //
 // Every branch that touches an existing drip is a filtered update rather than a read followed
 // by a write, so two webhooks racing for the same lead cannot clobber each other's state.
-export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollResult> {
+export async function enrollFromTagOutcome(cfg: DripConfig, call: TagOutcome): Promise<EnrollResult> {
   const db = await getDb()
-  const drips = db.collection(COLLECTION)
+  const drips = db.collection(cfg.campaign.collection)
+  const campaign = cfg.campaign.id
   const now = new Date()
   const { phone, callId } = call
 
@@ -63,14 +64,14 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
   // below, which already absorbs repeats: a repeat while active is `already_active`, and a
   // repeat after the drip ended is `cooldown`.
 
-  // The lead now carries a different tag, so they belong to that tag's campaign rather than
-  // this one. We cannot tell from here whether it means sales connected, the lead was closed,
-  // or something else — only that they are no longer NR — so the reason records the fact
-  // (the tag changed) rather than guessing at intent.
-  if (!call.isNoResponse) {
-    if (!cancelOnTagChange()) {
+  // The lead no longer carries this campaign's trigger tag, so they belong to some other tag's
+  // campaign rather than this one. We cannot tell from here whether it means sales connected, the
+  // lead was closed, or something else — only that the trigger is gone — so the reason records
+  // the fact (the tag changed) rather than guessing at intent.
+  if (!call.isTrigger) {
+    if (!cfg.cancelOnTagChange()) {
       await drips.updateOne({ phone }, { $set: { lastCallAt: now }, ...addCallId })
-      return { action: 'ignored', phone, detail: 'NR_DRIP_CANCEL_ON_TAG_CHANGE is false' }
+      return { action: 'ignored', phone, campaign, detail: `${cfg.campaign.envPrefix}CANCEL_ON_TAG_CHANGE is false` }
     }
     const res = await drips.updateOne(
       { phone, state: { $in: ACTIVE_STATES } },
@@ -80,10 +81,10 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
         ...addCallId,
       },
     )
-    if (res.modifiedCount > 0) return { action: 'cancelled', phone, state: 'cancelled', detail: call.outcome }
+    if (res.modifiedCount > 0) return { action: 'cancelled', phone, campaign, state: 'cancelled', detail: call.outcome }
     // Nothing active to stop; still file the call id so a retry is recognised as a replay.
     await drips.updateOne({ phone }, { $set: { lastCallAt: now }, ...addCallId })
-    return { action: 'ignored', phone, detail: `no active drip for outcome "${call.outcome}"` }
+    return { action: 'ignored', phone, campaign, detail: `no active drip for outcome "${call.outcome}"` }
   }
 
   // Sales typically try the same lead several times. Each further attempt is recorded, but the
@@ -94,7 +95,14 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
   )
   if (active.matchedCount > 0) {
     const doc = await drips.findOne({ phone }, { projection: { state: 1, step: 1, dueAt: 1 } })
-    return { action: 'already_active', phone, state: doc?.state as NrDripState, step: Number(doc?.step ?? 0), dueAt: doc?.dueAt as Date }
+    return {
+      action: 'already_active',
+      phone,
+      campaign,
+      state: doc?.state as DripState,
+      step: Number(doc?.step ?? 0),
+      dueAt: doc?.dueAt as Date,
+    }
   }
 
   const existing = await drips.findOne(
@@ -113,14 +121,20 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
   const sentCount = Array.isArray(existing?.steps) ? existing.steps.length : 0
   if (existing && sentCount > 0) {
     const endedAt = dripEndedAt(existing)
-    if (endedAt && now.getTime() - endedAt.getTime() < reenrollCooldownMs()) {
+    if (endedAt && now.getTime() - endedAt.getTime() < cfg.reenrollCooldownMs()) {
       await drips.updateOne({ phone }, { $set: { lastCallAt: now }, ...addCallId })
-      return { action: 'cooldown', phone, state: existing.state as NrDripState, detail: 'within NR_DRIP_REENROLL_AFTER_HOURS' }
+      return {
+        action: 'cooldown',
+        phone,
+        campaign,
+        state: existing.state as DripState,
+        detail: `within ${cfg.campaign.envPrefix}REENROLL_AFTER_HOURS`,
+      }
     }
   }
 
-  const dueAt = dueAtForStep(now, 0)
-  if (!dueAt) return { action: 'ignored', phone, detail: 'no drip steps configured' }
+  const dueAt = cfg.dueAtForStep(now, 0)
+  if (!dueAt) return { action: 'ignored', phone, campaign, detail: 'no drip steps configured' }
 
   const snapshot = await leadSnapshot(phone)
 
@@ -144,11 +158,11 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
       // A re-enrolment must not inherit the previous run's failure diagnostics.
       $unset: { claimedAt: '', lastError: '', cancelledAt: '', cancelReason: '' },
       $inc: { callAttempts: 1 },
-      $setOnInsert: { phone, campaign: CAMPAIGN },
+      $setOnInsert: { phone, campaign },
       ...addCallId,
     },
     { upsert: true },
   )
 
-  return { action: existing ? 'reenrolled' : 'enrolled', phone, state: 'due', step: 0, dueAt }
+  return { action: existing ? 'reenrolled' : 'enrolled', phone, campaign, state: 'due', step: 0, dueAt }
 }

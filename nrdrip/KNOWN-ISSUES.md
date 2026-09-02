@@ -1,7 +1,9 @@
 # NR DRIP — known issues, risks and unfinished work
 
 Written 2 Sep 2026, after building and live-testing the drip against the real Bigin flow, then
-revised once the bugs found in that review were fixed.
+revised once the bugs found in that review were fixed. Revised again when the engine moved to
+`dripcore/` and the Intermediate campaign was added — everything below still applies, and most of
+it now applies to **both** campaigns, since they run the same code.
 
 Everything below is genuinely wrong, unfinished, or behaves in a way you would not expect.
 Nothing is speculative — each item names the code that causes it.
@@ -24,7 +26,8 @@ supplying, or a decision you made deliberately.
 | # | Issue | Rating |
 |---|---|---|
 | 1.1 | `re_nurture` placeholder really sends to real leads | **CRITICAL — open** |
-| 1.2 | The webhook is unauthenticated | **HIGH — open by choice** |
+| 1.2 | A lead tagged `NR,Intermediate` gets both sequences | **MEDIUM — open by choice** |
+| 1.3 | The webhook is unauthenticated | **HIGH — open by choice** |
 | 2.1 | A 10-digit foreign number becomes an Indian one | **MEDIUM — open** |
 | 2.2 | Everything returns 200, so a broken flow looks healthy | **MEDIUM — open by choice** |
 | 3.1 | Quiet hours squeeze the gap between messages | **LOW — by design** |
@@ -57,7 +60,20 @@ did not choose for this purpose.
 *Closes when:* you send the Day 1 template name and it replaces `NR_DRIP_TEMPLATE_2`. Or set
 `NR_DRIP_STEP_OFFSETS=0` and the drip is one message until then.
 
-### 1.2 The webhook is unauthenticated — **HIGH, open by your decision**
+### 1.2 A lead in two campaigns gets two sequences — **MEDIUM, open by your decision**
+
+Bigin sends every tag the contact carries, and the campaigns are independent by design. A lead
+tagged `NR,Intermediate` enrols in both and receives **both** sequences — up to six messages where
+you might have pictured three.
+
+Both crons default to `*/15`, so the two messages can land seconds apart and read as a
+double-send to the person receiving them. Offset the `intermediate-drip` cron line (e.g. NR on
+`*/15`, Intermediate on `5,20,35,50`) so they never collide.
+
+*Closes when:* you either accept the volume, or decide one campaign should suppress the other —
+which is a rule in `dripcore/webhook.ts`, not a rewrite.
+
+### 1.3 The webhook is unauthenticated — **HIGH, open by your decision**
 
 Anyone who learns the URL can enrol any phone number into a WhatsApp drip on your WATI account.
 The realistic damage is not the bill; it is your business number being reported and
@@ -65,7 +81,7 @@ quality-limited by Meta.
 
 What limits it is entirely downstream: `NR_DRIP_ENABLED`, `NR_DRIP_MAX_CANDIDATES=200`, and the
 re-enrol cooldown. Since §4.6, a stranger can no longer *cancel* drips by posting a tagless
-payload — only enrol.
+payload — only enrol. It now enrols into **two** campaigns rather than one.
 
 *Fix if the URL ever leaks:* nginx `allow`/`deny` on that path using Zoho's published IP ranges.
 
@@ -212,7 +228,7 @@ in the stop list.
 ### 4.6 A payload with no `Tag` field cancelled an active drip — **FIXED**
 
 The webhook treated a missing tag the same as a removed one, so any other integration posting
-here without a `Tag` field silently stopped a running drip — and with §1.2, so could a stranger.
+here without a `Tag` field silently stopped a running drip — and with §1.3, so could a stranger.
 
 It now distinguishes "`Tag` key present but empty" (a real removal — still cancels, as you
 wanted) from "`Tag` key absent" (an unrelated payload — ignored).
@@ -222,8 +238,12 @@ wanted) from "`Tag` key absent" (an unrelated payload — ignored).
 ### 4.7 No `campaign` field blocked the other tag drips — **FIXED**
 
 Records now carry `campaign: 'nr'`, with a `(campaign, state)` index and a backfill in
-`ensure-indexes.mjs` for anything written earlier. The other Bigin tags can have their own
-sequences in this collection without their leads being confused for NR ones.
+`dripcore/ensure-indexes.mjs` for anything written earlier.
+
+Note what this field is and is not. Each campaign gets its **own collection** — `nr_drip`,
+`intermediate_drip` — because the unique index on `phone` is what makes the enrolment upsert safe,
+and two campaigns sharing one collection would collide on that key. The `campaign` field is for
+reporting across collections, not for separating them.
 
 ### 4.8 Wasted lookup, misnamed variable, tracked build artifact — **FIXED**
 
@@ -242,11 +262,13 @@ sequences in this collection without their leads being confused for NR ones.
 | Day 1 template | you are supplying it; `re_nurture` is standing in (§1.1) |
 | Day 3 template | not supplied; cadence held at `0,24` until it exists |
 | Remaining stop tags | only `CWOS` is in `NR_DRIP_STOP_OUTCOMES`; add the others when confirmed (§4.5) |
-| Other tag campaigns | not built; the `campaign` field is now in place for them (§4.7) |
-| Deployment | nothing is on the server — no `nrdrip/`, no routes |
-| Production indexes | `node nrdrip/ensure-indexes.mjs` not yet run on Atlas |
-| Production env | `.env` is gitignored; all `NR_DRIP_*` keys must be re-entered by hand |
-| Production cron | the 15-minute cron line is not installed |
+| Intermediate Day 1+ | step 1 is `intermediate_wati_updated` (approved, one variable). Cadence held at `0` — one message — until a Day 1 template exists |
+| Intermediate switch-on | `INTERMEDIATE_DRIP_ENABLED=true`. Nothing has reached a real lead yet only because nothing is deployed and no cron is installed — that changes at deploy |
+| Other tag campaigns | not built, but now cheap: a descriptor file and a collection (see `intermediatedrip/campaign.ts`) |
+| Deployment | nothing is on the server — no `dripcore/`, no campaign folders, no routes |
+| Production indexes | `node dripcore/ensure-indexes.mjs <collection> <campaign>` not yet run on Atlas, for either collection |
+| Production env | `.env` is gitignored; all `NR_DRIP_*` **and `INTERMEDIATE_DRIP_*`** keys must be re-entered by hand |
+| Production cron | neither cron line is installed; offset them from each other (§1.2) |
 | Zoho URL | still points at a dead tunnel; needs the production URL |
 | Automated tests | none — everything verified by hand against live Bigin |
 
@@ -264,6 +286,8 @@ Listed so nobody "fixes" them later:
 - **Contact ids are not used for replay detection.** `${trigger.id}` is identical on every
   webhook about a person; using it swallowed the "sales connected" webhook and left drips
   running. Idempotency comes from the state machine instead.
-- **`CA_Status` is ignored.** It holds the course level ("Intermediate"), not a call result.
+- **`CA_Status` is ignored.** It holds the course level, which also reads "Intermediate" — but the
+  Intermediate campaign keys off the `Tag` array like every other campaign, not off this field.
+- **Each campaign has its own collection.** Not a shared one filtered by `campaign` (§4.7).
 - **The runner refuses to send when candidates exceed `NR_DRIP_MAX_CANDIDATES`.** A silent
   no-op is the right response to a suspicious spike.

@@ -1,26 +1,13 @@
 import { getDb } from '@/lib/mongodb'
 import { istHour } from '@/lib/vslReminders'
 import { getLastInboundAt } from '@/lib/wati'
-import {
-  COLLECTION,
-  MAX_STEP_ATTEMPTS,
-  batchSize,
-  dueAtForStep,
-  enabled,
-  maxCandidates,
-  quietEndIst,
-  quietStartIst,
-  reclaimStale,
-  retryBackoffMs,
-  sendGapMs,
-  staleClaimMs,
-} from './config'
-import { sendNrDripStep } from './send'
-import type { NrDripBatchResult, NrDripDoc } from './types'
+import { MAX_STEP_ATTEMPTS, type DripConfig } from './config'
+import { sendDripStep } from './send'
+import type { DripBatchResult, DripDoc } from './types'
 
-function inQuietHours(now: Date) {
-  const start = quietStartIst()
-  const end = quietEndIst()
+function inQuietHours(cfg: DripConfig, now: Date) {
+  const start = cfg.quietStartIst()
+  const end = cfg.quietEndIst()
   const hour = istHour(now)
   // The window wraps midnight, so "quiet" is outside [end, start).
   return start > end ? hour >= start || hour < end : hour >= start && hour < end
@@ -41,16 +28,28 @@ async function hasRepliedSinceEnrolment(phone: string, enrolledAt: Date) {
 
 // Sends at most one step per lead per run. Every state transition is a filtered atomic update,
 // so a second concurrent run (or a duplicated cron tick) cannot double-send.
-export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promise<NrDripBatchResult> {
+export async function runDripBatch(cfg: DripConfig, options: { dryRun?: boolean } = {}): Promise<DripBatchResult> {
   const dryRun = Boolean(options.dryRun)
-  const result: NrDripBatchResult = { dryRun, candidates: 0, claimed: 0, sent: 0, skippedSteps: 0, completed: 0, cancelled: 0, failed: 0, leads: [] }
+  const { logTag, envPrefix } = cfg.campaign
+  const result: DripBatchResult = {
+    campaign: cfg.campaign.id,
+    dryRun,
+    candidates: 0,
+    claimed: 0,
+    sent: 0,
+    skippedSteps: 0,
+    completed: 0,
+    cancelled: 0,
+    failed: 0,
+    leads: [],
+  }
 
-  if (!dryRun && !enabled()) {
-    return { ...result, skipped: 'NR_DRIP_ENABLED is not true' }
+  if (!dryRun && !cfg.enabled()) {
+    return { ...result, skipped: `${envPrefix}ENABLED is not true` }
   }
 
   const now = new Date()
-  if (!dryRun && inQuietHours(now)) {
+  if (!dryRun && inQuietHours(cfg, now)) {
     // No state change needed — dueAt is already in the past, so these simply go out on the
     // first run after quiet hours end.
     return { ...result, skipped: 'quiet hours (Asia/Kolkata)' }
@@ -58,7 +57,7 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
 
   const db = await getDb()
   // Typed so $push against `steps` is checked rather than degraded to a bare Document.
-  const drips = db.collection<NrDripDoc>(COLLECTION)
+  const drips = db.collection<DripDoc>(cfg.campaign.collection)
 
   const due = { state: 'due' as const, dueAt: { $lte: now } }
 
@@ -66,13 +65,13 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
 
   // Circuit breaker: a bad import or a backfill that wrongly stamped dueAt would show up here
   // as a huge candidate count. Refuse to message anyone until a human looks.
-  const cap = maxCandidates()
+  const cap = cfg.maxCandidates()
   if (result.candidates > cap) {
-    console.error(`NR drip aborted: ${result.candidates} candidates exceeds NR_DRIP_MAX_CANDIDATES=${cap}`)
+    console.error(`${logTag} aborted: ${result.candidates} candidates exceeds ${envPrefix}MAX_CANDIDATES=${cap}`)
     return { ...result, skipped: `candidate count ${result.candidates} exceeds cap ${cap}` }
   }
 
-  const batch = batchSize()
+  const batch = cfg.batchSize()
 
   if (dryRun) {
     const preview = await drips.find(due).sort({ dueAt: 1 }).limit(batch).toArray()
@@ -80,7 +79,7 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
     return result
   }
 
-  const gapMs = sendGapMs()
+  const gapMs = cfg.sendGapMs()
 
   for (let i = 0; i < batch; i++) {
     // Claim one lead atomically. Never find() then update — that double-sends across workers.
@@ -107,12 +106,12 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
       continue
     }
 
-    const outcome = await sendNrDripStep(phone, name, step)
+    const outcome = await sendDripStep(cfg, phone, name, step)
 
     // Where the lead goes once this step is behind them — the same transition whether the
     // message went out or the step simply had nothing configured to send.
     const nextStep = step + 1
-    const nextDueAt = dueAtForStep(enrolledAt, nextStep)
+    const nextDueAt = cfg.dueAtForStep(enrolledAt, nextStep)
     const advance = nextDueAt
       // attempts counts CONSECUTIVE failures on the current step, so leaving it clears them.
       ? { state: 'due' as const, step: nextStep, dueAt: nextDueAt, attempts: 0 }
@@ -135,7 +134,7 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
       // Nothing to send for this step yet, which is a gap in configuration rather than anything
       // about this lead. Skipping keeps them in the sequence — parking them here would be
       // terminal, and they would never resume once the template finally exists.
-      console.warn(`NR drip step skipped: ${outcome.reason}`)
+      console.warn(`${logTag} step skipped: ${outcome.reason}`)
       await drips.updateOne(
         { _id: lead._id, state: 'claimed' },
         { $set: advance, $unset: { claimedAt: '', lastError: '' } },
@@ -157,7 +156,7 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
       // to move forward. Left in the past, this same batch loop re-claimed the lead on its very
       // next iteration and burned all three attempts inside a second, which defeats the whole
       // point of retrying something transient like a brief WATI outage.
-      const retryAt = new Date(Date.now() + retryBackoffMs(Number(lead.attempts || 1)))
+      const retryAt = new Date(Date.now() + cfg.retryBackoffMs(Number(lead.attempts || 1)))
       await drips.updateOne(
         { _id: lead._id, state: 'claimed' },
         { $set: { state: 'due', dueAt: retryAt, lastError: outcome.error }, $unset: { claimedAt: '' } },
@@ -183,11 +182,11 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
 
 // Claims stranded by a crash between claim and finalise. Auto-reclaiming risks a duplicate
 // (the send may have succeeded first), so by default they are parked for review.
-export async function sweepStaleNrDripClaims() {
+export async function sweepStaleClaims(cfg: DripConfig) {
   const db = await getDb()
-  const cutoff = new Date(Date.now() - staleClaimMs())
-  const target = reclaimStale() ? 'due' : 'stuck'
-  const res = await db.collection(COLLECTION).updateMany(
+  const cutoff = new Date(Date.now() - cfg.staleClaimMs())
+  const target = cfg.reclaimStale() ? 'due' : 'stuck'
+  const res = await db.collection(cfg.campaign.collection).updateMany(
     { state: 'claimed', claimedAt: { $lt: cutoff } },
     { $set: { state: target } },
   )

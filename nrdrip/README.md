@@ -7,9 +7,14 @@ nobody answers, nothing used to happen. NR DRIP fills that gap: Bigin reports th
 and a lead tagged `NR` is enrolled in a three-message sequence over **Day 0 / 1 / 3** that
 stops the moment they reply, are reached, or have the tag taken off.
 
-Self-contained: everything except the two HTTP routes lives in this folder. It reuses
-`lib/wati.ts` for sending, `lib/phone.ts` for normalisation, and the same claim-before-send
-state machine as `lib/vslReminders.ts`.
+**The engine is no longer in this folder.** The state machine, the send path and the webhook
+decision tree live in [`dripcore/`](../dripcore) and are shared with every other tag campaign —
+[`intermediatedrip/`](../intermediatedrip) today — so a bug fixed there is fixed for all of them.
+What remains here is `campaign.ts` (the descriptor: `nr` / `nr_drip` / `NR_DRIP_` / its legacy env
+aliases) and `index.ts` (dripcore bound to it).
+
+dripcore reuses `lib/wati.ts` for sending, `lib/phone.ts` for normalisation, and the same
+claim-before-send state machine as `lib/vslReminders.ts`.
 
 ## Before you switch it on
 
@@ -90,7 +95,7 @@ Shared with the rest of the app: `MONGODB_URI`, `MONGODB_DB_NAME`, `CRON_SECRET`
 ## Install
 
 ```bash
-node nrdrip/ensure-indexes.mjs          # dev database first
+node dripcore/ensure-indexes.mjs nr_drip nr     # dev database first
 ```
 
 ```cron
@@ -98,7 +103,8 @@ node nrdrip/ensure-indexes.mjs          # dev database first
 ```
 
 nginx must deny `/api/cron/` from the internet, exactly as it already does for `vsl-reminders`.
-`/api/webhooks/bigin-call-outcome` **is** public and **unauthenticated**, so anyone who learns
+`/api/webhooks/bigin-call-outcome` is shared with the Intermediate campaign — one payload, both
+decisions — and **is** public and **unauthenticated**, so anyone who learns
 the URL can enrol any phone number into the drip. Nothing at the route stops them; what limits
 the damage sits downstream — `NR_DRIP_ENABLED` gates all sending, `NR_DRIP_MAX_CANDIDATES`
 refuses a run whose due count spikes, and `NR_DRIP_REENROLL_AFTER_HOURS` stops the same number
@@ -123,3 +129,10 @@ entire batch.
 
 None here, by design. NR DRIP writes the `nr_drip` collection; dashboards over it are built in
 **Followup_dashboard**.
+
+## Env var names
+
+`NR_DRIP_NR_OUTCOMES` and `NR_DRIP_STOP_OUTCOMES` are the names dripcore knows as `TRIGGER_TAGS`
+and `STOP_TAGS`. They keep working unchanged — `nrdrip/campaign.ts` declares them as aliases,
+because the live `.env` was typed by hand before dripcore existed. Setting
+`NR_DRIP_TRIGGER_TAGS` / `NR_DRIP_STOP_TAGS` overrides the old name if you ever want to migrate.

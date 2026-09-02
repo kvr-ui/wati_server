@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import { normalizePhone } from '@/lib/phone'
-import { isNoResponseOutcome, isStopOutcome, nrOutcomesConfigured } from '@/nrdrip/config'
-import { cancelDrip, enrollFromCallOutcome } from '@/nrdrip/enroll'
+import type { EnrollResult } from '@/dripcore/types'
+import type { TagWebhookInput } from '@/dripcore/webhook'
+import { handleNrWebhook } from '@/nrdrip'
+import { handleIntermediateWebhook } from '@/intermediatedrip'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -102,8 +104,11 @@ export async function POST(request: Request) {
   const name = (str(body.name, body.Name, body.NAME, body.Full_Name) || split).slice(0, 100)
 
   // Tag is last on purpose: it is where THIS Bigin flow records the call result, but a payload
-  // carrying an explicit outcome field means what it says. Note CA_Status is NOT consulted —
-  // it holds the student's course level ("Intermediate"), not anything about the call.
+  // carrying an explicit outcome field means what it says. Bigin sends EVERY tag the contact
+  // carries, comma-joined, which is what lets one payload trigger several campaigns at once.
+  //
+  // CA_Status is still NOT consulted. It holds the student's course level, which happens to also
+  // read "Intermediate" — but the Intermediate campaign keys off the Tag, like every other one.
   const outcome =
     str(body.outcome, body.Outcome, body.Call_Result, body.callResult, body.Call_Status, body.Status, body.status) ||
     labels(body.Tag) ||
@@ -117,14 +122,6 @@ export async function POST(request: Request) {
 
   console.log(`${TAG} extracted:`, JSON.stringify({ phone, name, outcome, callId, tagFieldPresent }))
 
-  // An empty NR_DRIP_NR_OUTCOMES makes every tag look like "no longer NR", which would enrol
-  // nobody and cancel every running drip on the next tag change — quietly, with clean logs and
-  // 200s. Refuse to touch anything until it is configured.
-  if (!nrOutcomesConfigured()) {
-    console.error(`${TAG} NR_DRIP_NR_OUTCOMES is empty — refusing to enrol or cancel anything`)
-    return reply(200, { success: true, action: 'ignored', detail: 'NR_DRIP_NR_OUTCOMES is not configured', phone })
-  }
-
   // Acknowledged, not rejected. This webhook fires on EVERY tag change on a contact — including
   // a tag being REMOVED, which legitimately arrives with an empty Tag array. That is nothing to
   // act on rather than a failure, and Zoho would otherwise mark the whole run failed and retry.
@@ -136,36 +133,31 @@ export async function POST(request: Request) {
     console.warn(`${TAG} no usable phone — nothing to do`)
     return reply(200, { success: true, action: 'ignored', detail: 'no usable phone in payload', receivedKeys: Object.keys(body) })
   }
-  // No tag on the contact. The drip only runs while the lead is STILL marked NR, and this flow
-  // fires on tag removal too — so an empty tag on someone mid-drip means sales took the mark
-  // off, and the chase stops. For everyone else there is no active drip and this is a no-op.
-  if (!outcome) {
-    if (!tagFieldPresent) {
-      console.warn(`${TAG} payload carries no Tag field at all — leaving any drip alone`)
-      return reply(200, { success: true, action: 'ignored', detail: 'no Tag field in payload', phone, receivedKeys: Object.keys(body) })
-    }
-    const stopped = await cancelDrip(phone, 'tag_removed')
-    console.log(`${TAG} contact has no tag — ${stopped ? 'active drip cancelled' : 'nothing to do'}`)
-    return reply(200, {
-      success: true,
-      action: stopped ? 'cancelled' : 'ignored',
-      detail: stopped ? 'NR tag removed, drip stopped' : 'contact has no tag',
-      phone,
-      receivedKeys: Object.keys(body),
-    })
-  }
 
-  const isNoResponse = isNoResponseOutcome(outcome)
-  const stopped = isStopOutcome(outcome)
-  console.log(`${TAG} outcome "${outcome}" -> ${isNoResponse ? 'NOT REACHED (enrol)' : stopped ? 'STOP tag (ends the chase)' : 'reached / other (no drip)'}`)
+  const input: TagWebhookInput = { phone, name, outcome, callId, tagFieldPresent }
 
+  // Every campaign sees the same payload and decides for itself. They are independent: a lead
+  // tagged `NR,Intermediate` enrols in both and gets both sequences, and dropping one tag ends
+  // only that campaign's chase. Each writes to its own collection, so neither can corrupt the
+  // other's state.
+  //
+  // Order matters only for the response: NR is first so its result stays at the top level.
+  const campaigns: Record<string, EnrollResult> = {}
   try {
-    const result = await enrollFromCallOutcome({ phone, name, outcome, callId, isNoResponse })
-    return reply(200, { success: true, ...result })
+    campaigns.nr = await handleNrWebhook(input)
+    campaigns.intermediate = await handleIntermediateWebhook(input)
   } catch (error) {
+    // A campaign that threw has left the DB in whatever state it reached, so 502 asks Zoho to
+    // retry the whole payload. That is safe: a repeat while a drip is active is `already_active`
+    // and a repeat after it ended is `cooldown`, so no lead is enrolled or messaged twice.
     console.error(`${TAG} enrolment failed`, error)
-    return reply(502, { error: 'Failed to process call outcome' })
+    return reply(502, { error: 'Failed to process call outcome', campaigns })
   }
+
+  // NR's result stays at the TOP LEVEL, unchanged. Monitoring built against `"action":"enrolled"`
+  // predates the second campaign (see nrdrip/KNOWN-ISSUES.md §2.2) and must keep reading the same
+  // field. Per-campaign detail lives under `campaigns`.
+  return reply(200, { success: true, ...campaigns.nr, campaigns })
 }
 
 // Zoho Flow and Bigin both like to probe a webhook with a GET before saving it. Answering with

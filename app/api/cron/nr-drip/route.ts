@@ -1,25 +1,12 @@
 import { NextResponse } from 'next/server'
-import { timingSafeEqual } from 'crypto'
-import { runNrDripBatch, sweepStaleNrDripClaims } from '@/nrdrip/runner'
+import { cronAuthorized } from '@/lib/cronAuth'
+import { runNrDripBatch, sweepStaleNrDripClaims } from '@/nrdrip'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-// Triggered by host cron against 127.0.0.1:3000, so it never traverses nginx. nginx should
-// additionally deny /api/cron/ so the route is unreachable from the internet even if the
-// token leaks. No CORS headers — this is not for browsers.
-function authorized(request: Request) {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return false
-  const header = request.headers.get('authorization') || ''
-  const provided = header.startsWith('Bearer ') ? header.slice(7) : ''
-  const a = Buffer.from(provided)
-  const b = Buffer.from(expected)
-  return a.length === b.length && timingSafeEqual(a, b)
-}
-
 async function handle(request: Request) {
-  if (!authorized(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!cronAuthorized(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const dryRun = new URL(request.url).searchParams.get('dryRun') === '1'
   try {
     const stale = dryRun ? null : await sweepStaleNrDripClaims()
