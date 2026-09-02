@@ -30,6 +30,7 @@ supplying, or a decision you made deliberately.
 | 1.3 | The webhook is unauthenticated | **HIGH — open by choice** |
 | 2.1 | A 10-digit foreign number becomes an Indian one | **MEDIUM — open** |
 | 2.2 | Everything returns 200, so a broken flow looks healthy | **MEDIUM — open by choice** |
+| 2.3 | A brochure send that fails three times is lost silently | **MEDIUM — open by choice** |
 | 3.1 | Quiet hours squeeze the gap between messages | **LOW — by design** |
 | 3.2 | `callAttempts` over-counts | **LOW — open** |
 | 3.3 | One WATI call per lead per step | **LOW — open** |
@@ -123,25 +124,52 @@ no phone ever arriving — reports success every time. The truth is in the respo
 
 ---
 
+### 2.3 A brochure send that fails three times is lost silently — **MEDIUM, open by your decision**
+
+The brochure campaigns have no cron, so the webhook request is the only delivery attempt that will
+ever happen. It retries three times — immediately, then ~5s, then ~15s later — which covers a
+transient WATI blip. A longer outage exhausts them and the lead is parked `failed`, and **nothing
+ever comes back for them**.
+
+Nothing alerts you. The evidence is a record in the collection:
+
+```js
+db.foundation_drip.find({ state: { $in: ['failed', 'unknown', 'due', 'stuck'] } })
+```
+
+Anything not `completed` or `cancelled` there is a lead who did not get their brochure. Re-running
+them is a curl to that campaign's `/api/cron/...-drip`, which still exists for exactly this.
+
+*Verified:* with WATI unconfigured, one webhook produced `retry → retry → failed`, `attempts: 3`,
+and `lastError: "WATI is not configured"` on the record.
+
+*Closes when:* a cron line is added back for those campaigns, or something watches for non-terminal
+records.
+
 ## 3. Still open — low
 
-### 3.0 The cron is no longer what delivers the first message — **by design**
+### 3.0 Only NR has a cron — **by design**
 
-The webhook now sends step 0 immediately, via `after()` so Zoho has its 200 first. A tagged lead
-is messaged in about a second rather than waiting up to fifteen minutes.
+The webhook sends step 0 itself, via `after()` so Zoho has its 200 first. For the three brochure
+campaigns that is the whole delivery mechanism: one tag, one message, about a second later. They
+have **no cron line at all**.
 
-The cron still matters, and turning it off would lose:
+That leaves NR as the only campaign with one, because it is the only one with a step that lands
+later — nothing but a clock can send its Day 1 message 24 hours on.
 
-- **NR's Day 1 message.** The webhook fires once; only a clock can send something 24 hours later.
-- **Retries.** A WATI blip during the instant send leaves the lead `due`; the cron is what comes
-  back for them.
-- **Quiet hours.** A lead tagged at 11pm is held, not sent. The morning cron releases them.
-  *Verified:* tagged inside quiet hours → `instant send: quiet hours (Asia/Kolkata)`, lead left
-  `due` with nothing sent.
+Two consequences of the brochure campaigns having no clock, both deliberate:
+
+- **Quiet hours are OFF for them** (`QUIET_START_IST` and `_QUIET_END_IST` both `0`). With no cron
+  to release a lead in the morning, holding one overnight would mean never messaging them at all.
+  A brochure answering a tag someone just applied is a poor reason to wake a lead at midnight, so
+  if that becomes a problem the answer is a cron, not a hold. NR keeps its quiet hours.
+- **A failed send is retried inside the request**, three times about 5 and 15 seconds apart, then
+  given up on. See §2.3.
 
 The instant path is `runDripBatch(cfg, { phone })` — the ordinary runner narrowed to one lead, not
-a second send path, so it cannot drift from the scheduled one and the atomic claim still applies.
-*Verified:* three concurrent identical webhooks produced one enrolment and exactly one message.
+a second send path, so it cannot drift and the atomic claim still applies. *Verified:* three
+concurrent identical webhooks produced one enrolment and exactly one message; equal quiet-hours
+bounds sent during what would be a quiet window while a real window still held.
 
 ### 3.1 Quiet hours squeeze the gap between messages — **by design**
 
@@ -296,7 +324,7 @@ reporting across collections, not for separating them.
 | Deployment | nothing is on the server — no `dripcore/`, no campaign folders, no routes |
 | Production indexes | `node dripcore/ensure-indexes.mjs <collection> <campaign>` not yet run on Atlas, for any of the four collections |
 | Production env | `.env` is gitignored; every `NR_DRIP_*`, `INTERMEDIATE_DRIP_*`, `FOUNDATION_DRIP_*` and `FINAL_DRIP_*` key must be re-entered by hand |
-| Production cron | none of the four cron lines is installed; offset them from each other (§1.2) |
+| Production cron | the NR line is not installed. The brochure campaigns need none — they send from the webhook (§3.0) |
 | Zoho URL | still points at a dead tunnel; needs the production URL |
 | Automated tests | none — everything verified by hand against live Bigin |
 

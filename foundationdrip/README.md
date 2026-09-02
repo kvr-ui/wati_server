@@ -48,10 +48,13 @@ FOUNDATION_DRIP_TEMPLATE_PARAMS_1=name
 node dripcore/ensure-indexes.mjs foundation_drip foundation
 ```
 
-```cron
-# Offset from every other drip line so one lead is never messaged twice in the same instant.
-8,23,38,53 * * * * curl -fsS -X POST -H "Authorization: Bearer \$CRON_SECRET" http://127.0.0.1:3000/api/cron/foundation-drip
-```
+**No cron line.** This campaign is delivered by the webhook itself — the message goes out about a
+second after the tag lands, and there is no later step for a clock to fire. `FOUNDATION_DRIP_QUIET_START_IST`
+and `_QUIET_END_IST` are both `0`, which switches quiet hours OFF: with no cron there would be
+nothing to release a lead held overnight, and they would simply never be messaged.
+
+`/api/cron/foundation-drip` still exists and still works. It is the manual recovery tool — curl it if a
+send failed and you want to push the lead through by hand.
 
 ## Reporting
 

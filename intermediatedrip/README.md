@@ -21,11 +21,11 @@ chase; the other keeps running.
 | `Intermediate,CWOS` | — | stops |
 | *(tag removed entirely)* | cancels | cancels |
 
-That doubled volume is the deliberate consequence of independence. It is not visible yet only
-because `NR_DRIP_ENABLED` is still `false` — the day both switches are on, a lead tagged
-`NR,Intermediate` gets both sequences. Offset this campaign's cron line from NR's so the two
-messages never land in the same instant, and remember `INTERMEDIATE_DRIP_ENABLED=false` is the
-kill switch if the volume turns out to be wrong.
+That doubled volume is the deliberate consequence of independence. A contact carrying two trigger
+tags is messaged once per campaign, and because the brochure campaigns now send from the webhook,
+those two messages land seconds apart rather than being spread by staggered cron lines. If that
+reads as spam, the fix is `INTERMEDIATE_DRIP_ENABLED=false` — or deciding one campaign should
+suppress the other, which is a rule in `dripcore/webhook.ts`.
 
 ## Where the code is
 
@@ -94,10 +94,14 @@ generic tag names:
 node dripcore/ensure-indexes.mjs intermediate_drip intermediate    # dev database first
 ```
 
-```cron
-# Offset from the NR line so a lead in both campaigns is not messaged twice at once.
-4,19,34,49 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/cron/intermediate-drip
-```
+**No cron line.** This campaign is delivered by the webhook itself — the message goes out about a
+second after the tag lands, and there is no later step for a clock to fire.
+`INTERMEDIATE_DRIP_QUIET_START_IST` and `_QUIET_END_IST` are both `0`, which switches quiet hours
+OFF: with no cron there would be nothing to release a lead held overnight, and they would simply
+never be messaged.
+
+`/api/cron/intermediate-drip` still exists and still works. It is the manual recovery tool — curl
+it if a send failed and you want to push the lead through by hand.
 
 nginx must deny `/api/cron/` from the internet. The webhook this campaign shares with NR DRIP,
 `/api/webhooks/bigin-call-outcome`, **is** public and unauthenticated — see

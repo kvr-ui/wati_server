@@ -4,6 +4,7 @@ import type { EnrollResult } from '@/dripcore/types'
 import type { TagWebhookInput } from '@/dripcore/webhook'
 import { handleTagWebhook } from '@/dripcore/webhook'
 import { runDripBatch } from '@/dripcore/runner'
+import { requeueNow } from '@/dripcore/enroll'
 import { ALL_DRIPS } from '@/lib/drips'
 import type { DripConfig } from '@/dripcore/config'
 
@@ -77,16 +78,48 @@ function parseBody(raw: string, contentType: string): Record<string, unknown> | 
 // either has nothing due or deliberately must not send.
 const STARTED = new Set(['enrolled', 'reenrolled'])
 
+// How hard the instant send tries before giving up, and how long it waits between goes.
+//
+// Only NR has a cron to come back for a lead later. For the brochure campaigns this request IS the
+// only delivery attempt there will ever be, so a two-second WATI blip would otherwise lose the
+// lead silently. Three tries about five and fifteen seconds apart cover a transient failure
+// without holding the process open for long. It costs nothing when the first try succeeds, which
+// is the normal case.
+const INSTANT_RETRY_DELAYS_MS = [5_000, 15_000]
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 // One campaign's immediate send for one lead. Never throws: this runs after the response is on the
 // wire, so an error here cannot be reported to Zoho and must not take down the request.
 async function sendNow(cfg: DripConfig, phone: string) {
-  try {
-    const result = await runDripBatch(cfg, { phone })
-    const detail = result.skipped ?? result.leads[0]?.outcome ?? 'nothing due'
-    console.log(`${cfg.campaign.logTag} instant send for ${phone}: ${detail}`)
-  } catch (error) {
-    // The lead stays `due`, so the cron retries. Nothing is lost.
-    console.error(`${cfg.campaign.logTag} instant send failed for ${phone}, leaving it to the cron`, error)
+  const tag = cfg.campaign.logTag
+
+  for (let attempt = 0; ; attempt++) {
+    let outcome: string
+    try {
+      const result = await runDripBatch(cfg, { phone })
+      outcome = result.skipped ?? result.leads[0]?.outcome ?? 'nothing due'
+    } catch (error) {
+      outcome = `threw: ${String((error as Error)?.message || error).slice(0, 200)}`
+    }
+
+    // `retry` is the runner's word for "definitely not delivered, attempts left". Anything else is
+    // either done (sent, completed, skipped, cancelled) or a state retrying cannot help — out of
+    // attempts, an ambiguous send we must not repeat, or the campaign being switched off.
+    const worthRetrying = outcome === 'retry' || outcome.startsWith('threw:')
+    const delay = INSTANT_RETRY_DELAYS_MS[attempt]
+
+    if (!worthRetrying || delay === undefined) {
+      const level = worthRetrying ? console.error : console.log
+      level(`${tag} instant send for ${phone}: ${outcome}${worthRetrying ? ' — GIVING UP, lead left due' : ''}`)
+      return
+    }
+
+    console.warn(`${tag} instant send for ${phone}: ${outcome} — retrying in ${delay / 1000}s`)
+    await sleep(delay)
+    // A failed attempt pushed dueAt out by the retry backoff, which assumes a cron. Pull it back
+    // so this next attempt can actually claim the lead.
+    await requeueNow(cfg, phone).catch(() => {})
   }
 }
 

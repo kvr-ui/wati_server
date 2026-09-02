@@ -8,6 +8,13 @@ import type { DripBatchResult, DripDoc } from './types'
 function inQuietHours(cfg: DripConfig, now: Date) {
   const start = cfg.quietStartIst()
   const end = cfg.quietEndIst()
+  // Equal start and end means quiet hours are OFF for this campaign — send at any hour.
+  //
+  // The brochure campaigns use this. They are one instant message answering a tag someone just
+  // applied, they have no cron to release a held lead in the morning, and a lead held overnight
+  // with nothing to wake them would simply never be messaged. NR keeps its quiet hours: it is an
+  // unsolicited chase over several days, and it has a cron.
+  if (start === end) return false
   const hour = istHour(now)
   // The window wraps midnight, so "quiet" is outside [end, start).
   return start > end ? hour >= start || hour < end : hour >= start && hour < end

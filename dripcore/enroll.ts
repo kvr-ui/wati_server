@@ -44,6 +44,21 @@ export async function cancelDrip(cfg: DripConfig, phone: string, reason: DripCan
   return res.modifiedCount > 0
 }
 
+// Brings a lead's next step forward to now, so the very next run can claim it.
+//
+// Only for the instant-send retry path: a failed send pushes dueAt out by the retry backoff, which
+// assumes a cron will come back later. The brochure campaigns have no cron, so their retries have
+// to happen inside the same request — which means clearing that backoff first. Filtered on `due`,
+// so it can never drag a completed, cancelled or in-flight claimed drip back into the queue.
+export async function requeueNow(cfg: DripConfig, phone: string) {
+  const db = await getDb()
+  const res = await db.collection(cfg.campaign.collection).updateOne(
+    { phone, state: 'due' },
+    { $set: { dueAt: new Date() } },
+  )
+  return res.modifiedCount > 0
+}
+
 // The single entry point for everything the Bigin tag webhook reports about ONE campaign.
 //
 // Every branch that touches an existing drip is a filtered update rather than a read followed
