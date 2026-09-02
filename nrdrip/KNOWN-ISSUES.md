@@ -26,7 +26,7 @@ supplying, or a decision you made deliberately.
 | # | Issue | Rating |
 |---|---|---|
 | 1.1 | `re_nurture` placeholder really sends to real leads | **CRITICAL — open** |
-| 1.2 | A lead tagged `NR,Intermediate` gets both sequences | **MEDIUM — open by choice** |
+| 1.2 | A lead carrying two trigger tags gets both sequences | **MEDIUM — open by choice** |
 | 1.3 | The webhook is unauthenticated | **HIGH — open by choice** |
 | 2.1 | A 10-digit foreign number becomes an Indian one | **MEDIUM — open** |
 | 2.2 | Everything returns 200, so a broken flow looks healthy | **MEDIUM — open by choice** |
@@ -62,13 +62,19 @@ did not choose for this purpose.
 
 ### 1.2 A lead in two campaigns gets two sequences — **MEDIUM, open by your decision**
 
-Bigin sends every tag the contact carries, and the campaigns are independent by design. A lead
-tagged `NR,Intermediate` enrols in both and receives **both** sequences — up to six messages where
-you might have pictured three.
+Bigin sends every tag the contact carries, and the campaigns are independent by design. There are
+now **four** — NR, Intermediate, Foundation Broucher, Final Broucher — and a contact carrying two
+trigger tags enrols in both and receives **both** messages. Verified: a contact tagged
+`Foundation Broucher,Final Broucher` got `foundation_template_tag` and `g1_final_template`.
 
-Both crons default to `*/15`, so the two messages can land seconds apart and read as a
-double-send to the person receiving them. Offset the `intermediate-drip` cron line (e.g. NR on
-`*/15`, Intermediate on `5,20,35,50`) so they never collide.
+Offset every cron line so two campaigns never message one lead in the same instant:
+
+```cron
+*/15        nr-drip
+5,20,35,50  intermediate-drip
+10,25,40,55 foundation-drip
+15,30,45,0  final-drip
+```
 
 *Closes when:* you either accept the volume, or decide one campaign should suppress the other —
 which is a rule in `dripcore/webhook.ts`, not a rewrite.
@@ -263,12 +269,13 @@ reporting across collections, not for separating them.
 | Day 3 template | not supplied; cadence held at `0,24` until it exists |
 | Remaining stop tags | only `CWOS` is in `NR_DRIP_STOP_OUTCOMES`; add the others when confirmed (§4.5) |
 | Intermediate Day 1+ | step 1 is `intermediate_wati_updated` (approved, one variable). Cadence held at `0` — one message — until a Day 1 template exists |
-| Intermediate switch-on | `INTERMEDIATE_DRIP_ENABLED=true`. Nothing has reached a real lead yet only because nothing is deployed and no cron is installed — that changes at deploy |
-| Other tag campaigns | not built, but now cheap: a descriptor file and a collection (see `intermediatedrip/campaign.ts`) |
+| Final brochure template | `FINAL_DRIP_TEMPLATE_1=g1_final_template` is a stand-in — the same 1:10 body as Intermediate. There is no approved Final brochure; `final_template_tag` is DELETED in WATI. Replace it when one exists |
+| Switch-on | Intermediate, Foundation and Final are all `ENABLED=true` and `WATI_DRY_RUN=false`. Sends are real; what stops them today is only that no cron is installed and nothing is deployed |
+| Other tag campaigns | cheap now: a descriptor, a collection, one line in `lib/drips.ts` |
 | Deployment | nothing is on the server — no `dripcore/`, no campaign folders, no routes |
-| Production indexes | `node dripcore/ensure-indexes.mjs <collection> <campaign>` not yet run on Atlas, for either collection |
-| Production env | `.env` is gitignored; all `NR_DRIP_*` **and `INTERMEDIATE_DRIP_*`** keys must be re-entered by hand |
-| Production cron | neither cron line is installed; offset them from each other (§1.2) |
+| Production indexes | `node dripcore/ensure-indexes.mjs <collection> <campaign>` not yet run on Atlas, for any of the four collections |
+| Production env | `.env` is gitignored; every `NR_DRIP_*`, `INTERMEDIATE_DRIP_*`, `FOUNDATION_DRIP_*` and `FINAL_DRIP_*` key must be re-entered by hand |
+| Production cron | none of the four cron lines is installed; offset them from each other (§1.2) |
 | Zoho URL | still points at a dead tunnel; needs the production URL |
 | Automated tests | none — everything verified by hand against live Bigin |
 

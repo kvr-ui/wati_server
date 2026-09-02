@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server'
 import { normalizePhone } from '@/lib/phone'
 import type { EnrollResult } from '@/dripcore/types'
 import type { TagWebhookInput } from '@/dripcore/webhook'
-import { handleNrWebhook } from '@/nrdrip'
-import { handleIntermediateWebhook } from '@/intermediatedrip'
+import { handleTagWebhook } from '@/dripcore/webhook'
+import { ALL_DRIPS } from '@/lib/drips'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -136,16 +136,18 @@ export async function POST(request: Request) {
 
   const input: TagWebhookInput = { phone, name, outcome, callId, tagFieldPresent }
 
-  // Every campaign sees the same payload and decides for itself. They are independent: a lead
-  // tagged `NR,Intermediate` enrols in both and gets both sequences, and dropping one tag ends
-  // only that campaign's chase. Each writes to its own collection, so neither can corrupt the
-  // other's state.
+  // Every campaign in lib/drips.ts sees the same payload and decides for itself. They are
+  // independent: a lead tagged `NR,Intermediate` enrols in both and gets both sequences, and
+  // dropping one tag ends only that campaign's chase. Each writes to its own collection, so none
+  // can corrupt another's state.
   //
-  // Order matters only for the response: NR is first so its result stays at the top level.
+  // Sequential rather than parallel on purpose — four concurrent Mongo round trips per webhook,
+  // on a hook Zoho fires for every tag change, is not worth the few milliseconds.
   const campaigns: Record<string, EnrollResult> = {}
   try {
-    campaigns.nr = await handleNrWebhook(input)
-    campaigns.intermediate = await handleIntermediateWebhook(input)
+    for (const cfg of ALL_DRIPS) {
+      campaigns[cfg.campaign.id] = await handleTagWebhook(cfg, input)
+    }
   } catch (error) {
     // A campaign that threw has left the DB in whatever state it reached, so 502 asks Zoho to
     // retry the whole payload. That is safe: a repeat while a drip is active is `already_active`
@@ -155,7 +157,7 @@ export async function POST(request: Request) {
   }
 
   // NR's result stays at the TOP LEVEL, unchanged. Monitoring built against `"action":"enrolled"`
-  // predates the second campaign (see nrdrip/KNOWN-ISSUES.md §2.2) and must keep reading the same
+  // predates every later campaign (see nrdrip/KNOWN-ISSUES.md §2.2) and must keep reading the same
   // field. Per-campaign detail lives under `campaigns`.
   return reply(200, { success: true, ...campaigns.nr, campaigns })
 }
