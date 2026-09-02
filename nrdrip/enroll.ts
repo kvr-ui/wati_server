@@ -19,6 +19,19 @@ async function leadSnapshot(phone: string) {
   }
 }
 
+// When the previous drip stopped running. Cancelled and completed stamp their own time; a run
+// parked as failed/window_closed/stuck stamps neither, so the last message it managed to send
+// is the closest honest answer, and enrolment time is the last resort.
+function dripEndedAt(doc: Record<string, unknown>): Date | undefined {
+  if (doc.cancelledAt instanceof Date) return doc.cancelledAt
+  if (doc.completedAt instanceof Date) return doc.completedAt
+  const steps = Array.isArray(doc.steps) ? doc.steps : []
+  const last = steps[steps.length - 1] as { sentAt?: unknown } | undefined
+  if (last?.sentAt instanceof Date) return last.sentAt
+  if (doc.enrolledAt instanceof Date) return doc.enrolledAt
+  return undefined
+}
+
 // Ends a drip early. Used by the runner when the lead replies, and by the webhook when sales
 // finally connects. Only matches an active drip, so it can never resurrect or overwrite a
 // sequence that already reached a terminal state.
@@ -84,12 +97,26 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
     return { action: 'already_active', phone, state: doc?.state as NrDripState, step: Number(doc?.step ?? 0), dueAt: doc?.dueAt as Date }
   }
 
-  const existing = await drips.findOne({ phone }, { projection: { enrolledAt: 1, state: 1 } })
+  const existing = await drips.findOne(
+    { phone },
+    { projection: { enrolledAt: 1, state: 1, steps: 1, cancelledAt: 1, completedAt: 1 } },
+  )
 
-  // A drip that finished (or was cancelled) recently should not immediately start over.
-  if (existing?.enrolledAt instanceof Date && now.getTime() - existing.enrolledAt.getTime() < reenrollCooldownMs()) {
-    await drips.updateOne({ phone }, { $set: { lastCallAt: now }, ...addCallId })
-    return { action: 'cooldown', phone, state: existing.state as NrDripState, detail: 'within NR_DRIP_REENROLL_AFTER_HOURS' }
+  // The cooldown exists so a lead is not messaged again too soon, which means it is about when
+  // the last drip ENDED — not when it started — and it only applies if that drip actually sent
+  // something.
+  //
+  // A drip that messaged nobody cannot have been too much contact. The usual cause is a tag
+  // applied and taken straight off again; measuring from enrolledAt used to lock that lead out
+  // for a week, which reads from the sales desk as the automation being broken. Once a message
+  // has gone out the cooldown applies normally, so repeated tagging still cannot spam anyone.
+  const sentCount = Array.isArray(existing?.steps) ? existing.steps.length : 0
+  if (existing && sentCount > 0) {
+    const endedAt = dripEndedAt(existing)
+    if (endedAt && now.getTime() - endedAt.getTime() < reenrollCooldownMs()) {
+      await drips.updateOne({ phone }, { $set: { lastCallAt: now }, ...addCallId })
+      return { action: 'cooldown', phone, state: existing.state as NrDripState, detail: 'within NR_DRIP_REENROLL_AFTER_HOURS' }
+    }
   }
 
   const dueAt = dueAtForStep(now, 0)
