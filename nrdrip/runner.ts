@@ -11,6 +11,7 @@ import {
   quietEndIst,
   quietStartIst,
   reclaimStale,
+  retryBackoffMs,
   sendGapMs,
   staleClaimMs,
 } from './config'
@@ -42,7 +43,7 @@ async function hasRepliedSinceEnrolment(phone: string, enrolledAt: Date) {
 // so a second concurrent run (or a duplicated cron tick) cannot double-send.
 export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promise<NrDripBatchResult> {
   const dryRun = Boolean(options.dryRun)
-  const result: NrDripBatchResult = { dryRun, candidates: 0, claimed: 0, sent: 0, completed: 0, cancelled: 0, failed: 0, leads: [] }
+  const result: NrDripBatchResult = { dryRun, candidates: 0, claimed: 0, sent: 0, skippedSteps: 0, completed: 0, cancelled: 0, failed: 0, leads: [] }
 
   if (!dryRun && !enabled()) {
     return { ...result, skipped: 'NR_DRIP_ENABLED is not true' }
@@ -108,17 +109,21 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
 
     const outcome = await sendNrDripStep(phone, name, step)
 
+    // Where the lead goes once this step is behind them — the same transition whether the
+    // message went out or the step simply had nothing configured to send.
+    const nextStep = step + 1
+    const nextDueAt = dueAtForStep(enrolledAt, nextStep)
+    const advance = nextDueAt
+      // attempts counts CONSECUTIVE failures on the current step, so leaving it clears them.
+      ? { state: 'due' as const, step: nextStep, dueAt: nextDueAt, attempts: 0 }
+      : { state: 'completed' as const, completedAt: new Date(), attempts: 0 }
+
     if (outcome.ok) {
-      const nextStep = step + 1
-      const nextDueAt = dueAtForStep(enrolledAt, nextStep)
       const sentAt = new Date()
       await drips.updateOne(
         { _id: lead._id, state: 'claimed' },
         {
-          $set: nextDueAt
-            // attempts counts CONSECUTIVE failures on the current step, so a success clears it.
-            ? { state: 'due', step: nextStep, dueAt: nextDueAt, attempts: 0 }
-            : { state: 'completed', completedAt: sentAt, attempts: 0 },
+          $set: advance,
           $push: { steps: { index: step, sentAt, channel: outcome.channel } },
           $unset: { claimedAt: '', lastError: '' },
         },
@@ -126,6 +131,18 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
       result.sent++
       if (!nextDueAt) result.completed++
       result.leads.push({ phone, step, outcome: nextDueAt ? `sent-${outcome.channel}` : `sent-${outcome.channel}-completed` })
+    } else if (outcome.notConfigured) {
+      // Nothing to send for this step yet, which is a gap in configuration rather than anything
+      // about this lead. Skipping keeps them in the sequence — parking them here would be
+      // terminal, and they would never resume once the template finally exists.
+      console.warn(`NR drip step skipped: ${outcome.reason}`)
+      await drips.updateOne(
+        { _id: lead._id, state: 'claimed' },
+        { $set: advance, $unset: { claimedAt: '', lastError: '' } },
+      )
+      result.skippedSteps++
+      if (!nextDueAt) result.completed++
+      result.leads.push({ phone, step, outcome: 'skipped-not-configured' })
     } else if (outcome.windowClosed) {
       // Retrying cannot help: the window will not reopen unless the lead writes to us, and
       // if they do, the drip is cancelled anyway. Park it for whoever configures templates.
@@ -136,11 +153,14 @@ export async function runNrDripBatch(options: { dryRun?: boolean } = {}): Promis
       result.failed++
       result.leads.push({ phone, step, outcome: 'window-closed' })
     } else if (outcome.definitive && Number(lead.attempts || 0) < MAX_STEP_ATTEMPTS) {
-      // Known not delivered and attempts remain — return it to the queue for the next tick.
-      // dueAt is untouched and already past, so it is picked up immediately.
+      // Known not delivered and attempts remain, so it goes back on the queue — but dueAt has
+      // to move forward. Left in the past, this same batch loop re-claimed the lead on its very
+      // next iteration and burned all three attempts inside a second, which defeats the whole
+      // point of retrying something transient like a brief WATI outage.
+      const retryAt = new Date(Date.now() + retryBackoffMs(Number(lead.attempts || 1)))
       await drips.updateOne(
         { _id: lead._id, state: 'claimed' },
-        { $set: { state: 'due', lastError: outcome.error }, $unset: { claimedAt: '' } },
+        { $set: { state: 'due', dueAt: retryAt, lastError: outcome.error }, $unset: { claimedAt: '' } },
       )
       result.failed++
       result.leads.push({ phone, step, outcome: 'retry' })

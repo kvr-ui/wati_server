@@ -33,6 +33,13 @@ await drips.createIndex({ phone: 1 }, { unique: true, name: 'phone_unique' })
 await drips.createIndex({ state: 1, dueAt: 1 }, { name: 'drip_queue' })
 // Webhook replay detection.
 await drips.createIndex({ sourceCallIds: 1 }, { name: 'source_call_ids' })
+// Records are tagged with the campaign they belong to, so the other Bigin tags can have their
+// own sequences in this collection without their leads being confused for NR ones.
+await drips.createIndex({ campaign: 1, state: 1 }, { name: 'campaign_state' })
+
+// Records written before the campaign field existed are all NR ones.
+const backfilled = await drips.updateMany({ campaign: { $exists: false } }, { $set: { campaign: 'nr' } })
+if (backfilled.modifiedCount) console.log(`backfilled campaign='nr' on ${backfilled.modifiedCount} record(s)`)
 
 console.log(`indexes on ${dbName}.nr_drip:`, (await drips.indexes()).map((i) => i.name).join(', '))
 await client.close()

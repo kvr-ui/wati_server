@@ -25,6 +25,10 @@ export type NrDripStepLog = {
 
 export type NrDripDoc = {
   phone: string
+  // Which campaign this record belongs to. Only ever 'nr' today, but the other Bigin tags are
+  // getting their own sequences — without this, two campaigns collide on the phone key and
+  // nothing can tell them apart afterwards.
+  campaign: string
   leadId: string | null
   name: string
   watchPercentageAtEnroll: number | null
@@ -73,6 +77,7 @@ export type NrDripBatchResult = {
   candidates: number
   claimed: number
   sent: number
+  skippedSteps: number
   completed: number
   cancelled: number
   failed: number

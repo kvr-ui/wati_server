@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { normalizePhone } from '@/lib/phone'
-import { isNoResponseOutcome } from '@/nrdrip/config'
+import { isNoResponseOutcome, isStopOutcome, nrOutcomesConfigured } from '@/nrdrip/config'
 import { cancelDrip, enrollFromCallOutcome } from '@/nrdrip/enroll'
 
 export const dynamic = 'force-dynamic'
@@ -110,7 +110,20 @@ export async function POST(request: Request) {
     labels(body.tag)
   const callId = str(body.callId, body.call_id, body.Call_Id, body.id, body.Id) || undefined
 
-  console.log(`${TAG} extracted:`, JSON.stringify({ phone, name, outcome, callId }))
+  // An empty tag means "the tag was taken off" only if the flow actually sent a Tag field. A
+  // payload with no Tag key at all is some other integration talking to this URL, and must not
+  // be allowed to silently stop a running drip.
+  const tagFieldPresent = 'Tag' in body || 'tag' in body
+
+  console.log(`${TAG} extracted:`, JSON.stringify({ phone, name, outcome, callId, tagFieldPresent }))
+
+  // An empty NR_DRIP_NR_OUTCOMES makes every tag look like "no longer NR", which would enrol
+  // nobody and cancel every running drip on the next tag change — quietly, with clean logs and
+  // 200s. Refuse to touch anything until it is configured.
+  if (!nrOutcomesConfigured()) {
+    console.error(`${TAG} NR_DRIP_NR_OUTCOMES is empty — refusing to enrol or cancel anything`)
+    return reply(200, { success: true, action: 'ignored', detail: 'NR_DRIP_NR_OUTCOMES is not configured', phone })
+  }
 
   // Acknowledged, not rejected. This webhook fires on EVERY tag change on a contact — including
   // a tag being REMOVED, which legitimately arrives with an empty Tag array. That is nothing to
@@ -127,6 +140,10 @@ export async function POST(request: Request) {
   // fires on tag removal too — so an empty tag on someone mid-drip means sales took the mark
   // off, and the chase stops. For everyone else there is no active drip and this is a no-op.
   if (!outcome) {
+    if (!tagFieldPresent) {
+      console.warn(`${TAG} payload carries no Tag field at all — leaving any drip alone`)
+      return reply(200, { success: true, action: 'ignored', detail: 'no Tag field in payload', phone, receivedKeys: Object.keys(body) })
+    }
     const stopped = await cancelDrip(phone, 'tag_removed')
     console.log(`${TAG} contact has no tag — ${stopped ? 'active drip cancelled' : 'nothing to do'}`)
     return reply(200, {
@@ -139,7 +156,8 @@ export async function POST(request: Request) {
   }
 
   const isNoResponse = isNoResponseOutcome(outcome)
-  console.log(`${TAG} outcome "${outcome}" -> ${isNoResponse ? 'NOT REACHED (enrol)' : 'reached / other (no drip)'}`)
+  const stopped = isStopOutcome(outcome)
+  console.log(`${TAG} outcome "${outcome}" -> ${isNoResponse ? 'NOT REACHED (enrol)' : stopped ? 'STOP tag (ends the chase)' : 'reached / other (no drip)'}`)
 
   try {
     const result = await enrollFromCallOutcome({ phone, name, outcome, callId, isNoResponse })

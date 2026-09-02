@@ -66,8 +66,9 @@ Terminal states: `completed`, `cancelled` (replied / tag_changed / tag_removed /
 |---|---|---|
 | `NR_DRIP_ENABLED` | `false` | Master switch. Nothing sends unless `true`. |
 | `NR_DRIP_NR_OUTCOMES` | — | Comma-separated outcomes that mean "not reached", case-insensitive. Empty = nothing ever enrols. |
-| `NR_DRIP_CANCEL_ON_CONNECTED` | `true` | A non-NR outcome cancels an active drip. `false` = reply-only cancellation. |
-| `NR_DRIP_STEP_OFFSETS` | `0,24,72` | Hours from enrolment per step. Length sets the step count. A step with no template parks the lead in `window_closed`, which is terminal — so shorten this rather than leaving a step unconfigured. |
+| `NR_DRIP_STOP_OUTCOMES` | — | Tags that end the chase even when NR is also present. A contact can carry several tags; without this a lead tagged `NR,CWOS` is still chased. Outcome tags only — never descriptive ones like `Hot Lead`. |
+| `NR_DRIP_CANCEL_ON_TAG_CHANGE` | `true` | Any non-NR tag cancels an active drip. `false` = reply-only cancellation. (`NR_DRIP_CANCEL_ON_CONNECTED` is the old name, still honoured.) |
+| `NR_DRIP_STEP_OFFSETS` | `0,24,72` | Hours from enrolment per step. Length sets the step count. A step with no template configured is skipped, and the lead moves on to the next one. |
 | `NR_DRIP_STEP_OFFSETS_MINUTES` | — | Overrides the above. Testing only. |
 | `NR_DRIP_MESSAGE_1..3` | — | Session copy per step. Leave empty to always use the template. Supports `{{name}}`, `{{url}}`, literal `\n`. |
 | `NR_DRIP_TEMPLATE_1..3` | — | Approved template name per step. Required in practice. |
@@ -78,6 +79,7 @@ Terminal states: `completed`, `cancelled` (replied / tag_changed / tag_removed /
 | `NR_DRIP_QUIET_END_IST` | `9` | Quiet hours end. |
 | `NR_DRIP_BATCH` | `25` | Max leads per run. |
 | `NR_DRIP_SEND_GAP_MS` | `400` | Pause between sends. |
+| `NR_DRIP_RETRY_BACKOFF_MINUTES` | `15` | How long a failed step waits before its next attempt, multiplied by the attempt number. |
 | `NR_DRIP_MAX_CANDIDATES` | `200` | Circuit breaker — above this the run refuses to send at all. |
 | `NR_DRIP_STALE_MINUTES` | `15` | Claim age before the sweep treats it as stranded. |
 | `NR_DRIP_RECLAIM_STALE` | `false` | `true` returns stranded claims to `due`; default parks them as `stuck`. |

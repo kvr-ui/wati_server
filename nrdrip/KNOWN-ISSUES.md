@@ -1,15 +1,16 @@
 # NR DRIP — known issues, risks and unfinished work
 
-Written 2 Sep 2026, after building and live-testing the drip against the real Bigin flow.
+Written 2 Sep 2026, after building and live-testing the drip against the real Bigin flow, then
+revised once the bugs found in that review were fixed.
 
-Everything below is something genuinely wrong, unfinished, or that behaves in a way you would
-not expect. Nothing is speculative — each item names the code that causes it.
+Everything below is genuinely wrong, unfinished, or behaves in a way you would not expect.
+Nothing is speculative — each item names the code that causes it.
 
 ## Severity
 
 | Rating | Means |
 |---|---|
-| **CRITICAL** | Losing leads or messaging the wrong people **right now**, or the moment you deploy. Fix before going live. |
+| **CRITICAL** | Losing leads or messaging the wrong people **right now**, or the moment you deploy. |
 | **HIGH** | Will bite under normal operation. Not firing today only because of how you happen to be using it. |
 | **MEDIUM** | Real, but needs a specific trigger — another integration, an unusual record, an attacker. |
 | **LOW** | Cosmetic, wasteful, or only affects reporting. |
@@ -17,27 +18,31 @@ not expect. Nothing is speculative — each item names the code that causes it.
 
 ### At a glance
 
+Every CRITICAL and HIGH code bug is fixed. What remains open is either content you are still
+supplying, or a decision you made deliberately.
+
 | # | Issue | Rating |
 |---|---|---|
-| 1.1 | `re_nurture` placeholder really sends to real leads | **CRITICAL** |
-| 1.2 | Unset `NR_DRIP_NR_OUTCOMES` silently cancels everything | **CRITICAL** |
-| 1.3 | A step with no template kills the lead permanently | **HIGH** |
-| 1.4 | A failed send burns all three retries in one second | **HIGH** |
-| 1.5 | Lead tagged NR **and** a closing tag still gets chased | **HIGH** |
-| 1.6 | The webhook is unauthenticated | **HIGH** |
-| 2.1 | Any payload without a `Tag` field cancels an active drip | **MEDIUM** |
-| 2.2 | Everything returns 200, so a broken flow looks healthy | **MEDIUM** |
-| 2.3 | A 10-digit foreign number becomes an Indian one | **MEDIUM** |
-| 2.4 | No `campaign` field blocks the other tag drips | **MEDIUM** |
-| 3.1 | Quiet hours squeeze the gap between messages | **LOW** |
-| 3.2 | `callAttempts` over-counts | **LOW** |
-| 3.3 | One WATI call per lead per step | **LOW** |
-| 3.4 | Misc: wasted lookup, misnamed var, IST for overseas leads, tracked buildinfo | **LOW** |
+| 1.1 | `re_nurture` placeholder really sends to real leads | **CRITICAL — open** |
+| 1.2 | The webhook is unauthenticated | **HIGH — open by choice** |
+| 2.1 | A 10-digit foreign number becomes an Indian one | **MEDIUM — open** |
+| 2.2 | Everything returns 200, so a broken flow looks healthy | **MEDIUM — open by choice** |
+| 3.1 | Quiet hours squeeze the gap between messages | **LOW — by design** |
+| 3.2 | `callAttempts` over-counts | **LOW — open** |
+| 3.3 | One WATI call per lead per step | **LOW — open** |
+| 3.4 | Quiet hours are IST for overseas leads too | **LOW — open** |
 | 4.1 | Re-enrolment cooldown measured from the wrong timestamp | **FIXED** |
+| 4.2 | Unset `NR_DRIP_NR_OUTCOMES` silently cancelled everything | **FIXED** |
+| 4.3 | A step with no template killed the lead permanently | **FIXED** |
+| 4.4 | A failed send burned all three retries in one second | **FIXED** |
+| 4.5 | A lead tagged NR **and** a closing tag still got chased | **FIXED** |
+| 4.6 | A payload with no `Tag` field cancelled an active drip | **FIXED** |
+| 4.7 | No `campaign` field blocked the other tag drips | **FIXED** |
+| 4.8 | Wasted session lookup, misnamed variable, tracked build artifact | **FIXED** |
 
 ---
 
-## 1. Critical and high
+## 1. Still open — needs you
 
 ### 1.1 `re_nurture` is a placeholder that really sends — **CRITICAL**
 
@@ -45,136 +50,70 @@ not expect. Nothing is speculative — each item names the code that causes it.
 about the Jan 2027 batch, not a test message. **Every real lead tagged `NR` gets it 24 hours
 after `nr_bigin`** until you replace it.
 
-*Fix:* set `NR_DRIP_TEMPLATE_2` to your real Day 1 template, or set `NR_DRIP_STEP_OFFSETS=0` so
-the drip is one message until it is ready.
+Not a code bug — it is the placeholder you asked for while your Day 1 template is being created.
+It is listed CRITICAL because it is the one thing here that messages real people with copy you
+did not choose for this purpose.
 
-### 1.2 An unset `NR_DRIP_NR_OUTCOMES` cancels everything and enrols nothing — **CRITICAL**
+*Closes when:* you send the Day 1 template name and it replaces `NR_DRIP_TEMPLATE_2`. Or set
+`NR_DRIP_STEP_OFFSETS=0` and the drip is one message until then.
 
-If that variable is missing or empty on the server, `isNoResponseOutcome()` returns false for
-**every** tag. Every webhook then reads as "lead is no longer NR", so:
+### 1.2 The webhook is unauthenticated — **HIGH, open by your decision**
 
-- no lead is ever enrolled, and
-- every existing drip is cancelled on the next tag change.
+Anyone who learns the URL can enrol any phone number into a WhatsApp drip on your WATI account.
+The realistic damage is not the bill; it is your business number being reported and
+quality-limited by Meta.
 
-There is no warning. The system looks alive — 200s, clean logs — and quietly does nothing.
+What limits it is entirely downstream: `NR_DRIP_ENABLED`, `NR_DRIP_MAX_CANDIDATES=200`, and the
+re-enrol cooldown. Since §4.6, a stranger can no longer *cancel* drips by posting a tagless
+payload — only enrol.
 
-This is the most likely production failure, because `.env` is gitignored: these keys must be
-re-typed by hand on the server, which is exactly when one gets missed.
-
-*Fix:* log a loud warning at startup when `NR_DRIP_ENABLED=true` and the outcome list is empty.
-
-### 1.3 A step with no template kills the lead permanently — **HIGH**
-
-A step with no `NR_DRIP_TEMPLATE_n` parks the lead in `window_closed`, a **terminal** state.
-They do not resume when you add the template later — that lead is finished.
-
-This is why the cadence is `0,24` and not `0,24,72`. **Do not add a step to
-`NR_DRIP_STEP_OFFSETS` before its template exists.**
-
-*Fix:* treat a missing template as "skip to the next step" rather than a terminal park.
-
-### 1.4 A failed send burns all three retries in about one second — **HIGH**
-
-The runner's batch loop re-reads the `due` queue every iteration. A definitive failure puts the
-lead straight back to `state: 'due'` with its **original** `dueAt` — already in the past — so
-the next loop iteration claims it again.
-
-```
-attempt 1 fails → back to due → attempt 2 fails → back to due → attempt 3 → failed
-```
-
-All three land inside one cron run, ~`NR_DRIP_SEND_GAP_MS` (400 ms) apart. The code comment
-says "returned to the queue for the next tick", which is not what happens.
-
-The retry was meant to ride out a transient WATI problem. As written, a 30-second WATI blip
-permanently parks the lead as `failed` instead of retrying 15 minutes later.
-
-*Fix:* push `dueAt` forward on a retry (`now + backoff`) instead of leaving it in the past.
-
-### 1.5 A lead tagged NR **and** a closing tag still gets chased — **HIGH**
-
-`isNoResponseOutcome()` returns true if **any** tag matches the NR list. Bigin sends every tag
-on the contact, so one carrying both arrives as `"NR,CWOS"` and enrols — though CWOS means the
-lead is closed.
-
-```
-Tag: [{NR}, {CWOS}]  →  outcome "NR,CWOS"  →  some() matches "nr"  →  ENROLLED
-```
-
-This cannot happen while a contact only ever carries one tag, which is how you use Bigin today.
-Nothing enforces that.
-
-*Fix:* add `NR_DRIP_STOP_OUTCOMES=CWOS,Connected,…` checked **before** the NR list, so a stop
-tag wins over a co-present NR tag.
-
-### 1.6 The webhook is unauthenticated — **HIGH**
-
-By your decision, and the reasoning holds — but the consequence belongs on the record. Anyone
-who learns the URL can enrol any phone number into a WhatsApp drip on your WATI account, or
-cancel drips (§2.1). The realistic damage is not the bill; it is your business number being
-reported and quality-limited by Meta.
-
-What limits it today is entirely downstream: `NR_DRIP_ENABLED`, `NR_DRIP_MAX_CANDIDATES=200`,
-and the re-enrol cooldown.
-
-*Fix if the URL leaks:* nginx `allow`/`deny` on that path using Zoho's published IP ranges.
+*Fix if the URL ever leaks:* nginx `allow`/`deny` on that path using Zoho's published IP ranges.
 
 ---
 
-## 2. Medium
+## 2. Still open — medium
 
-### 2.1 Any payload without a `Tag` field cancels an active drip — **MEDIUM**
-
-The webhook treats a missing or empty tag as "NR tag removed" and cancels. Correct for your
-current flow, which always sends `Tag`. But any other Zoho flow, integration or manual test that
-posts here without a `Tag` field silently stops a running drip.
-
-With §1.6, anyone who learns the URL can cancel every drip by posting `{"Phone":"91…"}`.
-
-*Fix:* distinguish "Tag key present but empty" (a real removal) from "Tag key absent" (an
-unrelated payload — ignore).
-
-### 2.2 Everything returns 200, so a broken flow looks healthy — **MEDIUM**
-
-By your request, the webhook never fails. A flow with the wrong field mapped — no phone ever
-arriving — reports success on every run. The truth is in the response **body**
-(`"action":"ignored"`, `detail`, `receivedKeys`), not the status code.
-
-`"action":"enrolled"` is the only response meaning a drip actually started.
-
-### 2.3 A 10-digit foreign number becomes an Indian one — **MEDIUM**
+### 2.1 A 10-digit foreign number becomes an Indian one — **MEDIUM**
 
 `normalizePhone()` prepends `DEFAULT_COUNTRY_CODE=91` to any 10-digit number. You have overseas
 leads — a Bangladeshi contact came through during testing. That one was fine because it arrived
 as `+880…`, but a 10-digit number stored without its country code is silently turned into a
 different, valid Indian number, and the message goes to a stranger.
 
-### 2.4 No `campaign` field blocks the other tag drips — **MEDIUM**
+**Deliberately not fixed.** `normalizePhone` is shared with the whole VSL system — link sending,
+lead resolution, reminders — and a 10-digit number genuinely is Indian in the overwhelming
+majority of your data. Changing the rule would alter behaviour well outside NR DRIP, which is
+not something to do blind.
 
-`nr_drip` holds one record per phone with nothing saying which campaign it is. Fine while NR is
-the only drip. The moment a second tag gets its own sequence, records collide on the phone key
-and the campaigns cannot be told apart.
+*Real fix:* make sure Bigin stores every contact with its country code, which is a data-quality
+job rather than a code one.
 
-Cheap now while the collection is empty; a data migration once production data exists.
+### 2.2 Everything returns 200, so a broken flow looks healthy — **MEDIUM, by your decision**
+
+The webhook never fails, so Zoho never marks a run failed. A flow with the wrong field mapped —
+no phone ever arriving — reports success every time. The truth is in the response **body**
+(`"action"`, `detail`, `receivedKeys`), not the status code.
+
+`"action":"enrolled"` is the only response that means a drip actually started.
 
 ---
 
-## 3. Low
+## 3. Still open — low
 
-### 3.1 Quiet hours squeeze the gap between messages
+### 3.1 Quiet hours squeeze the gap between messages — **by design**
 
-Each step's `dueAt` comes from `enrolledAt`, not from when the previous message actually went
-out, so a step delayed by quiet hours lands closer to the next one.
+Each step's `dueAt` comes from `enrolledAt`, not from when the previous message went out, so a
+step delayed by quiet hours lands closer to the next one.
 
 ```
 22:00 Mon  tagged NR, step 1 due → held (quiet hours)
 09:00 Tue  step 1 sends           ← 11h late
 22:00 Tue  step 2 due             → held
-09:00 Wed  step 2 sends           ← lead experienced a 24h gap, not the intended 48h
+09:00 Wed  step 2 sends           ← lead experienced 24h, not the intended 48h
 ```
 
-Absolute scheduling is deliberate — it stops a paused cron compressing the whole sequence — but
-the *felt* gap varies with enrolment time.
+Absolute scheduling is deliberate — it stops a paused cron compressing the whole sequence — so
+this is the accepted cost, not an oversight.
 
 ### 3.2 `callAttempts` over-counts
 
@@ -184,16 +123,12 @@ times sales actually phoned. Do not report on it as one.
 ### 3.3 One WATI API call per lead per step
 
 The reply check calls `getMessages` before every send. At batch 25 that is 25 extra calls per
-run; watch WATI's rate limits as volume grows.
+run. Necessary — it is how a reply cancels the drip — but watch WATI's rate limits as volume
+grows.
 
-### 3.4 Miscellaneous
+### 3.4 Quiet hours are IST for everyone
 
-- **A wasted lookup on template-only steps.** `sendNrDripStep` checks the 24h session window
-  even when no session copy is configured, so the result is never used.
-- **Quiet hours are IST for everyone**, including overseas leads.
-- **`NR_DRIP_CANCEL_ON_CONNECTED` is misnamed** — it controls cancelling on *any* tag change.
-- **`tsconfig.tsbuildinfo` is tracked in git** and shows modified on every build. Predates this
-  work; belongs in `.gitignore`.
+Including overseas leads. There is no per-lead timezone in the data to do better.
 
 ---
 
@@ -201,8 +136,8 @@ run; watch WATI's rate limits as volume grows.
 
 ### 4.1 Re-enrolment cooldown measured from the wrong timestamp — **FIXED**
 
-The cooldown was measured from `enrolledAt` rather than from when the drip ended, and applied
-even to a drip that had sent nothing. Two opposite failures came out of that:
+Measured from `enrolledAt` rather than from when the drip ended, and applied even to a drip that
+had sent nothing. Two opposite failures came out of that.
 
 **Locked a lead out for a week.** A tag applied and taken straight off again still blocked
 re-enrolment for the full 168 hours, so sales re-tagging saw nothing happen.
@@ -213,17 +148,90 @@ re-enrolment for the full 168 hours, so sales re-tagging saw nothing happen.
 10:02  tagged NR again        → cooldown   ← no drip for 7 days
 ```
 
-**And messaged a lead too soon.** The inverse: a long drip enrolled 8 days ago but ended 2 hours
-ago passed the check (8 days > 7) and re-enrolled — sending a second message two hours after
-the first.
+**And messaged a lead too soon.** The inverse: a drip enrolled 8 days ago but ended 2 hours ago
+passed the check (8 days > 7) and re-enrolled — a second message two hours after the first.
 
 Now the cooldown runs from when the drip actually ended (`cancelledAt`, else `completedAt`, else
 the last message sent), and is skipped entirely when the previous drip sent nothing — a drip
-that messaged nobody cannot have been too much contact. Once a message has gone out the cooldown
-applies normally, so repeated tagging still cannot spam anyone.
+that messaged nobody cannot have been too much contact. Once a message has gone out it applies
+normally, so repeated tagging still cannot spam anyone.
 
-Verified: un-sent drip re-tagged → `reenrolled`; sent drip re-tagged → `cooldown`; drip enrolled
-8 days ago but ended 2 hours ago → `cooldown`.
+*Verified:* un-sent drip re-tagged → `reenrolled`; sent drip re-tagged → `cooldown`; enrolled 8
+days ago but ended 2 hours ago → `cooldown`.
+
+### 4.2 An unset `NR_DRIP_NR_OUTCOMES` cancelled everything — **FIXED**
+
+With that variable empty, every tag looked like "no longer NR": nothing was ever enrolled, and
+every running drip was cancelled on the next tag change — silently, with clean logs and 200s.
+The most likely production failure, since `.env` is gitignored and the keys are retyped by hand
+at deploy.
+
+The webhook now checks `nrOutcomesConfigured()` and refuses to enrol **or** cancel anything,
+logging a loud error instead.
+
+*Verified:* with the list empty, an active drip survived a `Connected` webhook and the error was
+logged.
+
+### 4.3 A step with no template killed the lead permanently — **FIXED**
+
+An unconfigured step parked the lead in `window_closed`, a terminal state they never recovered
+from — even once the template existed.
+
+`sendNrDripStep` now returns `notConfigured`, and the runner advances the lead to the next step
+instead of parking them. A step whose template has not been created yet can no longer end
+someone's sequence, so adding a step before its template is safe.
+
+*Verified:* with step 2's template unset, a lead got step 1 then `skipped-not-configured`, and
+finished `completed` rather than `window_closed`.
+
+### 4.4 A failed send burned all three retries in one second — **FIXED**
+
+A definitive failure put the lead back to `due` with its original, already-past `dueAt`, so the
+same batch loop re-claimed it on the next iteration. All three attempts landed ~400 ms apart
+inside one cron run, meaning a brief WATI outage permanently parked the lead as `failed`.
+
+Retries now push `dueAt` forward by `NR_DRIP_RETRY_BACKOFF_MINUTES` (default 15) multiplied by
+the attempt number, so each attempt lands on a later cron tick.
+
+*Verified:* a deliberately invalid template produced one attempt with `dueAt` ~15 minutes out
+and `state: due`, where it previously produced three attempts and `failed`.
+
+### 4.5 A lead tagged NR **and** a closing tag still got chased — **FIXED**
+
+`isNoResponseOutcome()` returned true if any tag matched, so a contact arriving as `"NR,CWOS"`
+enrolled despite being closed.
+
+`NR_DRIP_STOP_OUTCOMES` (set to `CWOS`) is now checked **first** and overrides the NR match.
+Descriptive tags are unaffected — `"Hot Lead,NR"` still enrols, because only outcome tags belong
+in the stop list.
+
+*Add your remaining outcome tags to `NR_DRIP_STOP_OUTCOMES` as they are confirmed.*
+
+*Verified:* `NR,CWOS` → not enrolled; `Hot Lead,NR` → enrolled.
+
+### 4.6 A payload with no `Tag` field cancelled an active drip — **FIXED**
+
+The webhook treated a missing tag the same as a removed one, so any other integration posting
+here without a `Tag` field silently stopped a running drip — and with §1.2, so could a stranger.
+
+It now distinguishes "`Tag` key present but empty" (a real removal — still cancels, as you
+wanted) from "`Tag` key absent" (an unrelated payload — ignored).
+
+*Verified:* payload with no `Tag` key → `ignored`; payload with `Tag: []` → `cancelled`.
+
+### 4.7 No `campaign` field blocked the other tag drips — **FIXED**
+
+Records now carry `campaign: 'nr'`, with a `(campaign, state)` index and a backfill in
+`ensure-indexes.mjs` for anything written earlier. The other Bigin tags can have their own
+sequences in this collection without their leads being confused for NR ones.
+
+### 4.8 Wasted lookup, misnamed variable, tracked build artifact — **FIXED**
+
+- The 24h session-window lookup only runs when there is session copy that could use it. A
+  template-only step no longer makes an API call whose answer it ignores.
+- `NR_DRIP_CANCEL_ON_CONNECTED` is now `NR_DRIP_CANCEL_ON_TAG_CHANGE`, which is what it does.
+  The old name is still honoured.
+- `tsconfig.tsbuildinfo` is untracked and gitignored.
 
 ---
 
@@ -232,8 +240,9 @@ Verified: un-sent drip re-tagged → `reenrolled`; sent drip re-tagged → `cool
 | | |
 |---|---|
 | Day 1 template | you are supplying it; `re_nurture` is standing in (§1.1) |
-| Day 3 template | not supplied; cadence held at `0,24` until it exists (§1.3) |
-| Other tag campaigns | not built; needs the `campaign` field first (§2.4) |
+| Day 3 template | not supplied; cadence held at `0,24` until it exists |
+| Remaining stop tags | only `CWOS` is in `NR_DRIP_STOP_OUTCOMES`; add the others when confirmed (§4.5) |
+| Other tag campaigns | not built; the `campaign` field is now in place for them (§4.7) |
 | Deployment | nothing is on the server — no `nrdrip/`, no routes |
 | Production indexes | `node nrdrip/ensure-indexes.mjs` not yet run on Atlas |
 | Production env | `.env` is gitignored; all `NR_DRIP_*` keys must be re-entered by hand |
@@ -249,7 +258,7 @@ Listed so nobody "fixes" them later:
 
 - **Any non-NR tag cancels the drip.** Each tag owns its own campaign; a lead who moves tags
   belongs to the new one. Confirmed as intended.
-- **CWOS cancels.** It means closed-without-sale.
+- **Removing the NR tag cancels the drip.** The chase only runs while the lead is still marked.
 - **An ambiguous send outcome parks the lead rather than retrying.** A duplicate WhatsApp
   message is worse than a missed one.
 - **Contact ids are not used for replay detection.** `${trigger.id}` is identical on every

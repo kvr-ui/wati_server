@@ -1,5 +1,5 @@
 import { getDb } from '@/lib/mongodb'
-import { COLLECTION, cancelOnConnected, dueAtForStep, reenrollCooldownMs } from './config'
+import { CAMPAIGN, COLLECTION, cancelOnTagChange, dueAtForStep, reenrollCooldownMs } from './config'
 import type { CallOutcome, EnrollResult, NrDripCancelReason, NrDripState } from './types'
 
 const ACTIVE_STATES: NrDripState[] = ['due', 'claimed']
@@ -68,9 +68,9 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
   // or something else — only that they are no longer NR — so the reason records the fact
   // (the tag changed) rather than guessing at intent.
   if (!call.isNoResponse) {
-    if (!cancelOnConnected()) {
+    if (!cancelOnTagChange()) {
       await drips.updateOne({ phone }, { $set: { lastCallAt: now }, ...addCallId })
-      return { action: 'ignored', phone, detail: 'NR_DRIP_CANCEL_ON_CONNECTED is false' }
+      return { action: 'ignored', phone, detail: 'NR_DRIP_CANCEL_ON_TAG_CHANGE is false' }
     }
     const res = await drips.updateOne(
       { phone, state: { $in: ACTIVE_STATES } },
@@ -144,7 +144,7 @@ export async function enrollFromCallOutcome(call: CallOutcome): Promise<EnrollRe
       // A re-enrolment must not inherit the previous run's failure diagnostics.
       $unset: { claimedAt: '', lastError: '', cancelledAt: '', cancelReason: '' },
       $inc: { callAttempts: 1 },
-      $setOnInsert: { phone },
+      $setOnInsert: { phone, campaign: CAMPAIGN },
       ...addCallId,
     },
     { upsert: true },

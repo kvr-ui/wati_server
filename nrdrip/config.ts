@@ -6,6 +6,10 @@
 
 export const COLLECTION = 'nr_drip'
 
+// Which campaign records written by this module belong to. The other Bigin tags will get their
+// own sequences alongside it.
+export const CAMPAIGN = 'nr'
+
 export const MAX_STEP_ATTEMPTS = 3
 
 function num(name: string, fallback: number) {
@@ -24,22 +28,45 @@ export function enabled() {
   return process.env.NR_DRIP_ENABLED === 'true'
 }
 
-export function cancelOnConnected() {
-  // Defaults ON: continuing to send "we tried to reach you" after sales actually spoke to the
-  // lead would be plainly wrong. Set to 'false' for reply-only cancellation.
-  return process.env.NR_DRIP_CANCEL_ON_CONNECTED !== 'false'
+export function cancelOnTagChange() {
+  // Defaults ON: continuing to send "we tried to reach you" after the lead has moved to another
+  // tag's campaign would be plainly wrong. Set to 'false' for reply-only cancellation.
+  // NR_DRIP_CANCEL_ON_CONNECTED is the original name, still honoured.
+  const raw = process.env.NR_DRIP_CANCEL_ON_TAG_CHANGE ?? process.env.NR_DRIP_CANCEL_ON_CONNECTED
+  return raw !== 'false'
 }
 
-// Case-insensitive match against the call outcome Bigin reports.
+// Whether the trigger list has been configured at all.
 //
-// The outcome arrives from a Bigin Tag, which is multi-value: a contact can carry several tags
-// and Zoho renders them joined ("Not Reachable,Hot Lead"). So this matches if ANY value in the
-// field is a not-reached marker, rather than comparing the whole string.
+// An empty list makes every tag look like "not NR", which would enrol nobody AND cancel every
+// running drip on the next tag change — silently, with clean logs. Callers check this and
+// refuse to act, rather than quietly dismantling the campaign.
+export function nrOutcomesConfigured() {
+  return list('NR_DRIP_NR_OUTCOMES').length > 0
+}
+
+function tagsIn(outcome: string) {
+  return outcome.split(/[,;|]/).map((s) => s.trim().toLowerCase()).filter(Boolean)
+}
+
+// Tags that end the chase outright, even when NR is on the contact too.
+//
+// Bigin sends EVERY tag the contact carries, so a lead can arrive as "NR,CWOS" — still marked
+// not-reached, but also closed. Without this the NR match wins and a closed lead keeps being
+// chased. Descriptive tags ("Hot Lead") are not outcomes and must not appear here.
+export function isStopOutcome(outcome: string) {
+  const stops = list('NR_DRIP_STOP_OUTCOMES').map((s) => s.toLowerCase())
+  if (!stops.length) return false
+  return tagsIn(outcome).some((value) => stops.includes(value))
+}
+
+// Case-insensitive match against the call outcome Bigin reports. True when any tag on the
+// contact is a not-reached marker — but a stop tag anywhere overrides it.
 export function isNoResponseOutcome(outcome: string) {
+  if (isStopOutcome(outcome)) return false
   const wanted = list('NR_DRIP_NR_OUTCOMES').map((s) => s.toLowerCase())
   if (!wanted.length) return false
-  const present = outcome.split(/[,;|]/).map((s) => s.trim().toLowerCase()).filter(Boolean)
-  return present.some((value) => wanted.includes(value))
+  return tagsIn(outcome).some((value) => wanted.includes(value))
 }
 
 // Hours from enrolment at which each step fires — Day 0 / 1 / 3 by default.
@@ -109,6 +136,12 @@ export function batchSize() {
 
 export function sendGapMs() {
   return num('NR_DRIP_SEND_GAP_MS', 400)
+}
+
+// How long a failed step waits before its next attempt. Grows with the attempt number so a
+// longer WATI outage is not burned through at a fixed interval.
+export function retryBackoffMs(attempt: number) {
+  return Math.max(1, attempt) * num('NR_DRIP_RETRY_BACKOFF_MINUTES', 15) * 60_000
 }
 
 export function maxCandidates() {
