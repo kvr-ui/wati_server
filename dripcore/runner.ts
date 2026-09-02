@@ -28,7 +28,17 @@ async function hasRepliedSinceEnrolment(phone: string, enrolledAt: Date) {
 
 // Sends at most one step per lead per run. Every state transition is a filtered atomic update,
 // so a second concurrent run (or a duplicated cron tick) cannot double-send.
-export async function runDripBatch(cfg: DripConfig, options: { dryRun?: boolean } = {}): Promise<DripBatchResult> {
+//
+// `phone` narrows the run to a single lead. That is how the webhook sends the first message the
+// instant a tag arrives instead of waiting up to 15 minutes for a cron tick — deliberately the
+// SAME function rather than a second send path, so the instant route cannot drift from the
+// scheduled one. It still honours enabled(), quiet hours and the claim, so an out-of-hours tag is
+// held for the morning cron exactly as before, and a cron tick racing this one loses the claim
+// rather than double-sending.
+export async function runDripBatch(
+  cfg: DripConfig,
+  options: { dryRun?: boolean; phone?: string } = {},
+): Promise<DripBatchResult> {
   const dryRun = Boolean(options.dryRun)
   const { logTag, envPrefix } = cfg.campaign
   const result: DripBatchResult = {
@@ -59,7 +69,9 @@ export async function runDripBatch(cfg: DripConfig, options: { dryRun?: boolean 
   // Typed so $push against `steps` is checked rather than degraded to a bare Document.
   const drips = db.collection<DripDoc>(cfg.campaign.collection)
 
-  const due = { state: 'due' as const, dueAt: { $lte: now } }
+  const due = options.phone
+    ? { state: 'due' as const, dueAt: { $lte: now }, phone: options.phone }
+    : { state: 'due' as const, dueAt: { $lte: now } }
 
   result.candidates = await drips.countDocuments(due)
 
@@ -71,7 +83,8 @@ export async function runDripBatch(cfg: DripConfig, options: { dryRun?: boolean 
     return { ...result, skipped: `candidate count ${result.candidates} exceeds cap ${cap}` }
   }
 
-  const batch = cfg.batchSize()
+  // A single-lead run never needs more than one iteration.
+  const batch = options.phone ? 1 : cfg.batchSize()
 
   if (dryRun) {
     const preview = await drips.find(due).sort({ dueAt: 1 }).limit(batch).toArray()

@@ -1,9 +1,11 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { normalizePhone } from '@/lib/phone'
 import type { EnrollResult } from '@/dripcore/types'
 import type { TagWebhookInput } from '@/dripcore/webhook'
 import { handleTagWebhook } from '@/dripcore/webhook'
+import { runDripBatch } from '@/dripcore/runner'
 import { ALL_DRIPS } from '@/lib/drips'
+import type { DripConfig } from '@/dripcore/config'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -68,6 +70,24 @@ function parseBody(raw: string, contentType: string): Record<string, unknown> | 
     return { ...body, ...(envelope[0] as Record<string, unknown>) }
   }
   return body
+}
+
+// The two enrolment outcomes that put a lead at step 0 with `dueAt` of now, and so have a message
+// ready to go immediately. Every other action — already_active, cooldown, cancelled, ignored —
+// either has nothing due or deliberately must not send.
+const STARTED = new Set(['enrolled', 'reenrolled'])
+
+// One campaign's immediate send for one lead. Never throws: this runs after the response is on the
+// wire, so an error here cannot be reported to Zoho and must not take down the request.
+async function sendNow(cfg: DripConfig, phone: string) {
+  try {
+    const result = await runDripBatch(cfg, { phone })
+    const detail = result.skipped ?? result.leads[0]?.outcome ?? 'nothing due'
+    console.log(`${cfg.campaign.logTag} instant send for ${phone}: ${detail}`)
+  } catch (error) {
+    // The lead stays `due`, so the cron retries. Nothing is lost.
+    console.error(`${cfg.campaign.logTag} instant send failed for ${phone}, leaving it to the cron`, error)
+  }
 }
 
 // Zoho Flow fires this when the sales team logs a call against the Bigin contact.
@@ -156,10 +176,28 @@ export async function POST(request: Request) {
     return reply(502, { error: 'Failed to process call outcome', campaigns })
   }
 
+  // Send the first message NOW rather than leaving the lead to wait for a cron tick.
+  //
+  // Deliberately AFTER the response: `after()` runs this once Zoho already has its 200, so a slow
+  // WATI can never make Zoho time out and re-fire the webhook — which would be a duplicate message
+  // to the lead. If the process dies mid-send the lead simply stays `due` and the cron picks them
+  // up, which is the same outcome as never having tried.
+  //
+  // This is the ordinary runner scoped to one phone, not a second send path, so it still honours
+  // the master switch, quiet hours, the reply check and the atomic claim. A lead tagged at 11pm is
+  // held for the morning exactly as before, and a cron tick landing at the same moment loses the
+  // claim instead of double-sending.
+  const kick = ALL_DRIPS.filter((cfg) => STARTED.has(campaigns[cfg.campaign.id]?.action))
+  if (kick.length) {
+    after(async () => {
+      for (const cfg of kick) await sendNow(cfg, phone)
+    })
+  }
+
   // NR's result stays at the TOP LEVEL, unchanged. Monitoring built against `"action":"enrolled"`
   // predates every later campaign (see nrdrip/KNOWN-ISSUES.md §2.2) and must keep reading the same
   // field. Per-campaign detail lives under `campaigns`.
-  return reply(200, { success: true, ...campaigns.nr, campaigns })
+  return reply(200, { success: true, ...campaigns.nr, campaigns, sendingNow: kick.map((c) => c.campaign.id) })
 }
 
 // Zoho Flow and Bigin both like to probe a webhook with a GET before saving it. Answering with

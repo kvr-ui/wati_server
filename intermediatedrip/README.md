@@ -96,7 +96,7 @@ node dripcore/ensure-indexes.mjs intermediate_drip intermediate    # dev databas
 
 ```cron
 # Offset from the NR line so a lead in both campaigns is not messaged twice at once.
-5,20,35,50 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/cron/intermediate-drip
+4,19,34,49 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/cron/intermediate-drip
 ```
 
 nginx must deny `/api/cron/` from the internet. The webhook this campaign shares with NR DRIP,

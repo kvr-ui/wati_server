@@ -50,7 +50,7 @@ node dripcore/ensure-indexes.mjs final_drip final
 
 ```cron
 # Offset from every other drip line so one lead is never messaged twice in the same instant.
-15,30,45,0 * * * * curl -fsS -X POST -H "Authorization: Bearer \$CRON_SECRET" http://127.0.0.1:3000/api/cron/final-drip
+12,27,42,57 * * * * curl -fsS -X POST -H "Authorization: Bearer \$CRON_SECRET" http://127.0.0.1:3000/api/cron/final-drip
 ```
 
 ## Reporting

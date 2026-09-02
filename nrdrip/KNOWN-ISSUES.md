@@ -67,13 +67,16 @@ now **four** — NR, Intermediate, Foundation Broucher, Final Broucher — and a
 trigger tags enrols in both and receives **both** messages. Verified: a contact tagged
 `Foundation Broucher,Final Broucher` got `foundation_template_tag` and `g1_final_template`.
 
-Offset every cron line so two campaigns never message one lead in the same instant:
+Offset every cron line so two campaigns never message one lead in the same instant. Note the
+first version of this table had `final-drip` on `15,30,45,0`, which is the *same* four minutes as
+NR's `*/15` — the two would have fired together, which is the one thing the staggering exists to
+prevent:
 
 ```cron
 */15        nr-drip
-5,20,35,50  intermediate-drip
-10,25,40,55 foundation-drip
-15,30,45,0  final-drip
+4,19,34,49  intermediate-drip
+8,23,38,53 foundation-drip
+12,27,42,57  final-drip
 ```
 
 *Closes when:* you either accept the volume, or decide one campaign should suppress the other —
@@ -121,6 +124,24 @@ no phone ever arriving — reports success every time. The truth is in the respo
 ---
 
 ## 3. Still open — low
+
+### 3.0 The cron is no longer what delivers the first message — **by design**
+
+The webhook now sends step 0 immediately, via `after()` so Zoho has its 200 first. A tagged lead
+is messaged in about a second rather than waiting up to fifteen minutes.
+
+The cron still matters, and turning it off would lose:
+
+- **NR's Day 1 message.** The webhook fires once; only a clock can send something 24 hours later.
+- **Retries.** A WATI blip during the instant send leaves the lead `due`; the cron is what comes
+  back for them.
+- **Quiet hours.** A lead tagged at 11pm is held, not sent. The morning cron releases them.
+  *Verified:* tagged inside quiet hours → `instant send: quiet hours (Asia/Kolkata)`, lead left
+  `due` with nothing sent.
+
+The instant path is `runDripBatch(cfg, { phone })` — the ordinary runner narrowed to one lead, not
+a second send path, so it cannot drift from the scheduled one and the atomic claim still applies.
+*Verified:* three concurrent identical webhooks produced one enrolment and exactly one message.
 
 ### 3.1 Quiet hours squeeze the gap between messages — **by design**
 
