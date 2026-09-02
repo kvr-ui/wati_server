@@ -4,13 +4,13 @@
 //                       nothing may auto-retry it.
 export type SendOutcome = { ok: true; data: unknown } | { ok: false; definitive: boolean; error: string }
 
-type TemplateParam = { name: string; value: string }
+export type TemplateParam = { name: string; value: string }
 
 function dryRun() {
   return process.env.WATI_DRY_RUN === 'true'
 }
 
-async function sendTemplate(templateName: string | undefined, phone: string, parameters: TemplateParam[]): Promise<SendOutcome> {
+export async function sendTemplate(templateName: string | undefined, phone: string, parameters: TemplateParam[]): Promise<SendOutcome> {
   const baseUrl = process.env.WATI_API_URL
   const token = process.env.WATI_TOKEN
   if (!baseUrl || !token) return { ok: false, definitive: true, error: 'WATI is not configured (WATI_API_URL / WATI_TOKEN)' }
@@ -92,7 +92,7 @@ export function buildVslUrl(phone: string, name?: string) {
   return `${base}/vsl?${params.toString()}`
 }
 
-function renderMessage(template: string, name: string, url: string) {
+export function renderMessage(template: string, name: string, url: string) {
   // Env files cannot hold real newlines, so copy is written with literal \n and unescaped here.
   return template
     .replace(/\\n/g, '\n')

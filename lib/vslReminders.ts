@@ -7,7 +7,7 @@ function num(name: string, fallback: number) {
 }
 
 // Hour of day in Asia/Kolkata — the timezone already used for the Bigin notes in lib/bigin.ts.
-function istHour(now: Date) {
+export function istHour(now: Date) {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hourCycle: 'h23' }).formatToParts(now)
   return Number(parts.find((p) => p.type === 'hour')?.value ?? '12')
 }
