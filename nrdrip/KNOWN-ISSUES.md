@@ -56,11 +56,19 @@ are still supplying, or a decision you made deliberately.
 nothing to do with chasing an unreachable lead. Every lead tagged `NR` would have received it 24
 hours after `nr_bigin`.
 
-It is now `nr2`, the purpose-written second chase ("YES, NOW! If you don't pick up that call, then
-all goes to vain") — approved, and declaring no variables, so `NR_DRIP_TEMPLATE_PARAMS_2=none`.
+The full sequence is now the one that was written for it, all three approved:
 
-*Verified:* a lead tagged `NR` got `nr_bigin` with their name at step 0, then `nr2` with no
-parameters at step 1, and finished `completed`.
+| Step | Template | Variables |
+|---|---|---|
+| Day 0 | `nr_bigin` — "we tried reaching out, but were unable to connect" | `name` |
+| Day 1 | `nr2` — "YES, NOW! If you don't pick up that call, then all goes to vain" | none |
+| Day 3 | `nr3` — "Shall I give your spot to someone else?" | none |
+
+`nr2` and `nr3` declare no variables at all, hence `PARAMS_2` and `PARAMS_3` both `none` — sending
+one a template does not declare risks the message being rejected.
+
+*Verified:* a lead tagged `NR` walked all three steps in order and finished `completed`, with
+`name` sent only on the first.
 
 ### 1.2 A lead in two campaigns gets two sequences — **MEDIUM, open by your decision**
 
@@ -315,7 +323,7 @@ reporting across collections, not for separating them.
 
 | | |
 |---|---|
-| Day 3 template | `nr3` is written and sitting **PENDING** in WATI. Deliberately NOT wired: a pending template is rejected on send, which burns the retries and parks the lead `failed`, where leaving it unset skips the step cleanly (§4.3). When it is approved, set `NR_DRIP_TEMPLATE_3=nr3`, `NR_DRIP_TEMPLATE_PARAMS_3=none` and `NR_DRIP_STEP_OFFSETS=0,24,72` |
+| ~~Day 3 template~~ | done — `nr3` is approved and wired, cadence now `0,24,72` |
 | Remaining stop tags | only `CWOS` is in `NR_DRIP_STOP_OUTCOMES`; add the others when confirmed (§4.5) |
 | Intermediate Day 1+ | step 1 is `intermediate_wati_updated` (approved, one variable). Cadence held at `0` — one message — until a Day 1 template exists |
 | Final brochure template | `FINAL_DRIP_TEMPLATE_1=g1_final_template` is a stand-in — the same 1:10 body as Intermediate. There is no approved Final brochure; `final_template_tag` is DELETED in WATI. Replace it when one exists |

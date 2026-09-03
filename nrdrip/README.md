@@ -25,10 +25,10 @@ replied, which cancels the drip. So the session-message path is opportunistic on
 templates are what actually deliver. With `NR_DRIP_ENABLED=true` and no templates configured,
 leads simply park as `window_closed`.
 
-Get three templates approved and set `NR_DRIP_TEMPLATE_1..3`. Declare each template's real
-variables with `NR_DRIP_TEMPLATE_PARAMS_n` — the default is `name`, and `none` is how a step
-says the template takes no variables at all (as `re_nurture` does). Sending a variable a
-template does not declare risks the message being rejected.
+All three are approved and wired: `nr_bigin` on Day 0, `nr2` on Day 1, `nr3` on Day 3. Declare
+each template's real variables with `NR_DRIP_TEMPLATE_PARAMS_n` — the default is `name`, and
+`none` is how a step says the template takes no variables at all, which is the case for both
+`nr2` and `nr3`. Sending a variable a template does not declare risks the message being rejected.
 
 ## Flow
 
