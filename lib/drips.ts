@@ -11,5 +11,6 @@ import { nrConfig } from '@/nrdrip'
 import { intermediateConfig } from '@/intermediatedrip'
 import { foundationConfig } from '@/foundationdrip'
 import { finalConfig } from '@/finaldrip'
+import { kitConfig } from '@/kitdrip'
 
-export const ALL_DRIPS: DripConfig[] = [nrConfig, intermediateConfig, foundationConfig, finalConfig]
+export const ALL_DRIPS: DripConfig[] = [nrConfig, intermediateConfig, foundationConfig, finalConfig, kitConfig]
