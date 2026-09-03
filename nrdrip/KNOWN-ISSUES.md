@@ -20,17 +20,19 @@ Nothing is speculative — each item names the code that causes it.
 
 ### At a glance
 
-Every CRITICAL and HIGH code bug is fixed. What remains open is either content you are still
-supplying, or a decision you made deliberately.
+Every CRITICAL and HIGH code bug is fixed, and so is the placeholder template that was the one
+remaining way real leads got copy nobody chose for them. What remains open is either content you
+are still supplying, or a decision you made deliberately.
 
 | # | Issue | Rating |
 |---|---|---|
-| 1.1 | `re_nurture` placeholder really sends to real leads | **CRITICAL — open** |
+| 1.1 | `re_nurture` placeholder really sends to real leads | **FIXED** |
 | 1.2 | A lead carrying two trigger tags gets both sequences | **MEDIUM — open by choice** |
 | 1.3 | The webhook is unauthenticated | **HIGH — open by choice** |
 | 2.1 | A 10-digit foreign number becomes an Indian one | **MEDIUM — open** |
 | 2.2 | Everything returns 200, so a broken flow looks healthy | **MEDIUM — open by choice** |
 | 2.3 | A brochure send that fails three times is lost silently | **MEDIUM — open by choice** |
+| 3.0 | Only NR has a cron; the rest send from the webhook | **by design** |
 | 3.1 | Quiet hours squeeze the gap between messages | **LOW — by design** |
 | 3.2 | `callAttempts` over-counts | **LOW — open** |
 | 3.3 | One WATI call per lead per step | **LOW — open** |
@@ -46,20 +48,19 @@ supplying, or a decision you made deliberately.
 
 ---
 
-## 1. Still open — needs you
+## 1. Highest impact
 
-### 1.1 `re_nurture` is a placeholder that really sends — **CRITICAL**
+### 1.1 `re_nurture` placeholder really sent to real leads — **FIXED**
 
-`NR_DRIP_TEMPLATE_2=re_nurture` is wired as the Day 1 message. It is a real approved template
-about the Jan 2027 batch, not a test message. **Every real lead tagged `NR` gets it 24 hours
-after `nr_bigin`** until you replace it.
+`NR_DRIP_TEMPLATE_2` was `re_nurture`, a real approved template about the Jan 2027 batch that had
+nothing to do with chasing an unreachable lead. Every lead tagged `NR` would have received it 24
+hours after `nr_bigin`.
 
-Not a code bug — it is the placeholder you asked for while your Day 1 template is being created.
-It is listed CRITICAL because it is the one thing here that messages real people with copy you
-did not choose for this purpose.
+It is now `nr2`, the purpose-written second chase ("YES, NOW! If you don't pick up that call, then
+all goes to vain") — approved, and declaring no variables, so `NR_DRIP_TEMPLATE_PARAMS_2=none`.
 
-*Closes when:* you send the Day 1 template name and it replaces `NR_DRIP_TEMPLATE_2`. Or set
-`NR_DRIP_STEP_OFFSETS=0` and the drip is one message until then.
+*Verified:* a lead tagged `NR` got `nr_bigin` with their name at step 0, then `nr2` with no
+parameters at step 1, and finished `completed`.
 
 ### 1.2 A lead in two campaigns gets two sequences — **MEDIUM, open by your decision**
 
@@ -314,8 +315,7 @@ reporting across collections, not for separating them.
 
 | | |
 |---|---|
-| Day 1 template | you are supplying it; `re_nurture` is standing in (§1.1) |
-| Day 3 template | not supplied; cadence held at `0,24` until it exists |
+| Day 3 template | `nr3` is written and sitting **PENDING** in WATI. Deliberately NOT wired: a pending template is rejected on send, which burns the retries and parks the lead `failed`, where leaving it unset skips the step cleanly (§4.3). When it is approved, set `NR_DRIP_TEMPLATE_3=nr3`, `NR_DRIP_TEMPLATE_PARAMS_3=none` and `NR_DRIP_STEP_OFFSETS=0,24,72` |
 | Remaining stop tags | only `CWOS` is in `NR_DRIP_STOP_OUTCOMES`; add the others when confirmed (§4.5) |
 | Intermediate Day 1+ | step 1 is `intermediate_wati_updated` (approved, one variable). Cadence held at `0` — one message — until a Day 1 template exists |
 | Final brochure template | `FINAL_DRIP_TEMPLATE_1=g1_final_template` is a stand-in — the same 1:10 body as Intermediate. There is no approved Final brochure; `final_template_tag` is DELETED in WATI. Replace it when one exists |
