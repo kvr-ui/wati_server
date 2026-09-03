@@ -79,7 +79,7 @@ Terminal states: `completed`, `cancelled` (replied / tag_changed / tag_removed /
 | `NR_DRIP_TEMPLATE_1..3` | — | Approved template name per step. Required in practice. |
 | `NR_DRIP_TEMPLATE_PARAMS_1..3` | `name` | Variables to send with that step's template. `none` for a template with no variables. |
 | `NR_DRIP_URL` | the lead's VSL link | Where the copy points — usually a booking/callback page. |
-| `NR_DRIP_REENROLL_AFTER_HOURS` | `168` | A finished drip cannot restart inside this window. |
+| `NR_DRIP_REENROLL_AFTER_HOURS` | `0` | Hours before a finished drip may restart. **0 = off**, which is what production runs: every tag change sends. Set to `168` to restore the one-week guard. |
 | `NR_DRIP_QUIET_START_IST` | `21` | Quiet hours begin (Asia/Kolkata). |
 | `NR_DRIP_QUIET_END_IST` | `9` | Quiet hours end. |
 | `NR_DRIP_BATCH` | `25` | Max leads per run. |
@@ -107,7 +107,7 @@ nginx must deny `/api/cron/` from the internet, exactly as it already does for `
 decisions — and **is** public and **unauthenticated**, so anyone who learns
 the URL can enrol any phone number into the drip. Nothing at the route stops them; what limits
 the damage sits downstream — `NR_DRIP_ENABLED` gates all sending, `NR_DRIP_MAX_CANDIDATES`
-refuses a run whose due count spikes, and `NR_DRIP_REENROLL_AFTER_HOURS` stops the same number
+refuses a run whose due count spikes, and `NR_DRIP_REENROLL_AFTER_HOURS` (currently `0`, so OFF) would stop the same number
 being enrolled over and over. If the URL leaks, restrict the path at nginx to Zoho's published
 IP ranges.
 

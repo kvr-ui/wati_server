@@ -79,7 +79,7 @@ generic tag names:
 | `INTERMEDIATE_DRIP_TEMPLATE_1..n` | — | Approved template name per step. Required in practice. |
 | `INTERMEDIATE_DRIP_TEMPLATE_PARAMS_1..n` | `name` | Variables to send with that step's template. `none` for a template that declares none. |
 | `INTERMEDIATE_DRIP_URL` | the lead's VSL link | Where the copy points. |
-| `INTERMEDIATE_DRIP_REENROLL_AFTER_HOURS` | `168` | A finished drip that sent something cannot restart inside this window. |
+| `INTERMEDIATE_DRIP_REENROLL_AFTER_HOURS` | `0` | Hours before a finished drip that sent something may restart. **0 = off**, which is what production runs: every tag change sends again. `168` restores the one-week guard. |
 | `INTERMEDIATE_DRIP_QUIET_START_IST` / `_QUIET_END_IST` | `21` / `9` | Quiet hours (Asia/Kolkata). |
 | `INTERMEDIATE_DRIP_BATCH` | `25` | Max leads per run. |
 | `INTERMEDIATE_DRIP_SEND_GAP_MS` | `400` | Pause between sends. |
