@@ -8,8 +8,17 @@ this contact?" and enrols, holds or cancels accordingly.
 
 ## What it sends
 
-`FINAL_DRIP_TEMPLATE_1=g1_final_template` — approved on WATI, one variable (`name`, filling `{{1}}`).
-**Placeholder-ish:** this is the same 1:10 tutoring body as the Intermediate template, chosen because there is no approved Final brochure — `final_template_tag` exists in WATI but is DELETED. Swap it the moment a proper one is approved.
+`FINAL_DRIP_TEMPLATE_1=final_bigin_29` — approved on WATI, one variable (`name`, filling `{{1}}`).
+
+**This is an acknowledgement, not a brochure.** It says the enquiry was received and someone will
+follow up, and sales send the real material by hand. That is deliberate: there is still no approved
+CA Final brochure in WATI, and the three `final_*` templates are all this same acknowledgement.
+
+It replaced `g1_final_template`, which went out to real Final-tagged leads before the mistake was
+caught. Despite the name, `g1_final` is the final version of the **Group 1** brochure, and Group 1
+is Intermediate — its body is `intermediate_wati_updated` plus one line of Group 1 pricing. So CA
+Final enquirers were reading Intermediate content at Intermediate prices. Check what a template
+actually SAYS before pointing a campaign at it; the name is not evidence.
 
 `FINAL_DRIP_STEP_OFFSETS=0` means **one message, immediately on enrolment**. There is no
 follow-up. Add `FINAL_DRIP_TEMPLATE_2` and widen the offsets if that changes.
@@ -38,7 +47,7 @@ FINAL_DRIP_ENABLED=true
 FINAL_DRIP_TRIGGER_TAGS=Final Broucher
 FINAL_DRIP_STOP_TAGS=CWOS
 FINAL_DRIP_STEP_OFFSETS=0
-FINAL_DRIP_TEMPLATE_1=g1_final_template
+FINAL_DRIP_TEMPLATE_1=final_bigin_29
 FINAL_DRIP_TEMPLATE_PARAMS_1=name
 ```
 
