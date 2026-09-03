@@ -325,7 +325,7 @@ reporting across collections, not for separating them.
 |---|---|
 | ~~Day 3 template~~ | done — `nr3` is approved and wired, cadence now `0,24,72` |
 | Remaining stop tags | only `CWOS` is in `NR_DRIP_STOP_OUTCOMES`; add the others when confirmed (§4.5) |
-| Intermediate Day 1+ | step 1 is `intermediate_wati_updated` (approved, one variable). Cadence held at `0` — one message — until a Day 1 template exists |
+| Intermediate Day 1+ | step 1 is `intermdiate_bigin_final` (approved, one variable; the misspelling is the real WATI name). Cadence held at `0` — one message — until a Day 1 template exists |
 | Final brochure template | `FINAL_DRIP_TEMPLATE_1=g1_final_template` is a stand-in — the same 1:10 body as Intermediate. There is no approved Final brochure; `final_template_tag` is DELETED in WATI. Replace it when one exists |
 | Switch-on | Intermediate, Foundation and Final are all `ENABLED=true` and `WATI_DRY_RUN=false`. Sends are real; what stops them today is only that no cron is installed and nothing is deployed |
 | Other tag campaigns | cheap now: a descriptor, a collection, one line in `lib/drips.ts` |
