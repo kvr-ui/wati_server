@@ -88,6 +88,13 @@ internet, as it already does:
 Quiet hours (`ONBOARDING_BOT_QUIET_START_IST` / `_END_IST`, default 21–9 IST) defer rather than
 cancel; equal start and end turns them off.
 
+**When the bot finishes**, `/api/webhooks/onboarding-bot-complete` stores the answers, forwards
+them to Zoho Flow, and sends `ONBOARDING_COMPLETE_MESSAGE` so the lead is not left on the bot's
+last question. It goes as a free-form session message — the lead answered seconds ago, so their
+window is certainly open and no template approval is needed. Unset the key and nothing is sent.
+The send can never fail the request: the answers are already stored by then, and a 502 would have
+Zoho retry the whole webhook.
+
 **Inspecting a run** — `?dryRun=1` reports what would be sent and changes nothing:
 
 ```

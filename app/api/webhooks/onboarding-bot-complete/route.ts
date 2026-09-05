@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { resolveLead } from '@/lib/leads'
 import { normalizePhone } from '@/lib/phone'
+import { renderMessage, sendSessionMessage } from '@/lib/wati'
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -105,6 +106,28 @@ export async function POST(request: Request) {
     //
     // Nothing cancels a pending +1h bot trigger either: a lead who finds the bot on their own
     // still gets the scheduled message, which is the agreed behaviour.
+
+    // 5. Close the conversation off, so the lead is not left on the bot's last question wondering
+    // what happens next.
+    //
+    // A free-form session message rather than a template: the lead answered a question seconds
+    // ago, so their 24h window is certainly open, and free-form needs no Meta approval and can
+    // carry real line breaks. No default copy on purpose — if ONBOARDING_COMPLETE_MESSAGE is not
+    // configured, nothing is sent rather than placeholder text reaching a real lead.
+    //
+    // Never allowed to fail the request: the answers are already stored and forwarded by this
+    // point, and a 502 here would have Zoho retry the whole webhook and duplicate that work.
+    const closingCopy = process.env.ONBOARDING_COMPLETE_MESSAGE
+    if (closingCopy?.trim() && normalizedPhone) {
+      try {
+        const text = renderMessage(closingCopy, name, '')
+        const outcome = await sendSessionMessage(normalizedPhone, text)
+        if (!outcome.ok) console.error('Onboarding closing message failed', { phone: normalizedPhone, error: outcome.error })
+      } catch (error) {
+        console.error('Onboarding closing message threw', error)
+      }
+    }
+
     return NextResponse.json({
       success: true,
       leadId,
