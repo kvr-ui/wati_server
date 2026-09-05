@@ -64,15 +64,26 @@ export async function POST(request: Request) {
 
   // `owner: true` is a message WE sent — echoed back on some event types. Acting on it would let
   // our own outbound message masquerade as the lead's tap and start the clock immediately.
-  if (body.owner === true) return NextResponse.json({ ok: true, ignored: 'outbound' })
-
-  const eventType = String(body.eventType ?? '')
-  // Delivery/read receipts arrive on the same hook. Only an actual inbound message counts.
-  if (eventType && !/message.?received|received.?message/i.test(eventType)) {
-    return NextResponse.json({ ok: true, ignored: eventType })
+  if (body.owner === true) {
+    console.log('WATI inbound webhook: ignored our own outbound', { eventType: body.eventType })
+    return NextResponse.json({ ok: true, ignored: 'outbound' })
   }
 
+  // Deny-listed rather than allow-listed, and deliberately so. WATI names the inbound event
+  // differently across accounts and API versions — `messageReceived`, `newContactMessageReceived`,
+  // or just `message` — and an allow-list that guesses wrong silently drops every real tap. What
+  // is reliably identifiable is the traffic we do NOT want: our own outbound sends, and delivery
+  // and read receipts. Anything else carrying a usable waId is treated as the lead writing to us,
+  // which is all the bot actually needs to know.
+  const eventType = String(body.eventType ?? '')
+  const notInbound = /sent|status|delivered|\bread\b|failed|failure|deleted|assign/i.test(eventType)
+
   const phone = normalizePhone(body.waId ?? body.whatsappNumber ?? body.phone)
+
+  // Logged for every call, so what WATI actually sends is visible without guessing at it.
+  console.log('WATI inbound webhook', { eventType, owner: body.owner, phone: phone ?? null, type: body.type, text: String(body.text ?? '').slice(0, 40) })
+
+  if (notInbound) return NextResponse.json({ ok: true, ignored: eventType })
   if (!phone) return NextResponse.json({ ok: true, ignored: 'no usable waId' })
 
   const now = new Date()
