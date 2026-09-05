@@ -24,17 +24,27 @@ const MAX_SEND_ATTEMPTS = 3
 // this cooldown are suppressed — that is the window where a duplicate almost certainly means
 // a webhook retry rather than a person genuinely going through the flow a second time.
 function resendCooldownMs() {
-  const hours = Number(process.env.VSL_RESEND_AFTER_HOURS)
-  return (Number.isFinite(hours) && hours >= 0 ? hours : 24) * 3600_000
+  const hours = envNumber('VSL_RESEND_AFTER_HOURS')
+  return (hours !== undefined && hours >= 0 ? hours : 24) * 3600_000
 }
 
 // Minutes win when set, so the delay can be dialled down for testing without disturbing the
 // production default.
+// An env var written as `KEY=` is unset, not zero. Number('') is 0 — finite and non-negative —
+// so without this the "minutes win when set" branch silently wins with a zero delay whenever the
+// key is present but blank, which is exactly how these files document an unused override.
+function envNumber(name: string) {
+  const raw = process.env[name]
+  if (raw === undefined || !raw.trim()) return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : undefined
+}
+
 function reminderDelayMs() {
-  const minutes = Number(process.env.VSL_REMINDER_DELAY_MINUTES)
-  if (Number.isFinite(minutes) && minutes >= 0) return minutes * 60_000
-  const hours = Number(process.env.VSL_REMINDER_DELAY_HOURS)
-  return (Number.isFinite(hours) && hours >= 0 ? hours : 23) * 3600_000
+  const minutes = envNumber('VSL_REMINDER_DELAY_MINUTES')
+  if (minutes !== undefined && minutes >= 0) return minutes * 60_000
+  const hours = envNumber('VSL_REMINDER_DELAY_HOURS')
+  return (hours !== undefined && hours >= 0 ? hours : 23) * 3600_000
 }
 
 // How long AFTER THE LEAD TAPS the button in the VSL template the onboarding bot is triggered.
@@ -42,22 +52,22 @@ function reminderDelayMs() {
 // for the chatbot API to reach them at all. Minutes win when set, so the delay can be dialled
 // down for testing without disturbing the production default.
 export function onboardingDelayMs() {
-  const minutes = Number(process.env.ONBOARDING_BOT_DELAY_MINUTES)
-  if (Number.isFinite(minutes) && minutes >= 0) return minutes * 60_000
-  const hours = Number(process.env.ONBOARDING_BOT_DELAY_HOURS)
-  return (Number.isFinite(hours) && hours >= 0 ? hours : 1) * 3600_000
+  const minutes = envNumber('ONBOARDING_BOT_DELAY_MINUTES')
+  if (minutes !== undefined && minutes >= 0) return minutes * 60_000
+  const hours = envNumber('ONBOARDING_BOT_DELAY_HOURS')
+  return (hours !== undefined && hours >= 0 ? hours : 1) * 3600_000
 }
 
 // How often to look for the tap, and how long to keep looking. A lead who never taps is dropped
 // at the deadline rather than checked forever.
 export function tapCheckMs() {
-  const minutes = Number(process.env.ONBOARDING_BOT_TAP_CHECK_MINUTES)
-  return (Number.isFinite(minutes) && minutes >= 0 ? minutes : 30) * 60_000
+  const minutes = envNumber('ONBOARDING_BOT_TAP_CHECK_MINUTES')
+  return (minutes !== undefined && minutes >= 0 ? minutes : 30) * 60_000
 }
 
 function tapDeadlineMs() {
-  const hours = Number(process.env.ONBOARDING_BOT_TAP_DEADLINE_HOURS)
-  return (Number.isFinite(hours) && hours >= 0 ? hours : 24) * 3600_000
+  const hours = envNumber('ONBOARDING_BOT_TAP_DEADLINE_HOURS')
+  return (hours !== undefined && hours >= 0 ? hours : 24) * 3600_000
 }
 
 // Sends the VSL link and records that it was sent, as one operation. Everything that delivers

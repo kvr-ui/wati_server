@@ -1,8 +1,12 @@
 import { getDb } from './mongodb'
 import { sendVslReminder, sessionWindowRemainingMs } from './wati'
 
+// `KEY=` is unset, not zero: Number('') is 0, which would quietly mean a batch size of zero or a
+// disabled interval. Only a key with an actual value overrides the fallback.
 function num(name: string, fallback: number) {
-  const value = Number(process.env[name])
+  const raw = process.env[name]
+  if (raw === undefined || !raw.trim()) return fallback
+  const value = Number(raw)
   return Number.isFinite(value) ? value : fallback
 }
 

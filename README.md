@@ -18,7 +18,10 @@ never saw the video at all.
 **t = 0 — `/api/webhooks/bigin-contact-created` and `/api/webhooks/zoho-flow`.** Both entry points
 send `WATI_VSL_TEMPLATE_NAME` (`vsl_final`), an approved template that is a greeting plus a
 button. It has to be a template — a contact who has just appeared in the CRM has never messaged
-us, so there is no 24h window and free-form cannot reach them. The send goes through
+us, so there is no 24h window and free-form cannot reach them.
+
+A repeat within `VSL_RESEND_AFTER_HOURS` (15 minutes) is suppressed as a webhook retry, so Bigin
+re-firing cannot message the same person twice. The send goes through
 `sendTrackedVslLink` (`lib/vslSend.ts`), which records `linkSentAt`; everything downstream hangs
 off that timestamp, so a send that skips it drops the lead out of the sequence entirely.
 
@@ -32,11 +35,22 @@ this; WhatsApp never sees a browser click.
 
 **t = tap + 1h — `/api/cron/onboarding-bot`.** The job runs in two phases.
 
-*Phase one* watches for the tap. There is no WATI webhook for incoming messages, so it polls: any
-inbound later than `linkSentAt` is the tap. A tapped lead is scheduled at tap + 1h; one who has
-not tapped is re-checked every `ONBOARDING_BOT_TAP_CHECK_MINUTES` (30) until
-`ONBOARDING_BOT_TAP_DEADLINE_HOURS` (24), then parked as `no_tap`. Each check is one WATI lookup
-for one lead, so those two keys are the cost dial.
+*Phase one* watches for the tap, and there are two ways it learns about one.
+
+`/api/webhooks/wati-inbound` is the fast path: WATI's `messageReceived` hook fires the instant the
+lead sends anything, and the bot is scheduled to the second. WATI signs nothing, so the shared
+secret rides in the URL WATI is pointed at — `?token=WATI_WEBHOOK_TOKEN`. An unset token refuses
+every call rather than accepting them, since this endpoint moves leads into a sending queue.
+
+The poller is the backstop, and is deliberately kept: a webhook that is misconfigured, briefly
+unreachable, or switched off in WATI would otherwise strand every lead in `waiting` with nothing
+to notice. It re-checks each waiting lead every `ONBOARDING_BOT_TAP_CHECK_MINUTES` (30) until
+`ONBOARDING_BOT_TAP_DEADLINE_HOURS` (24), then parks them as `no_tap`. Both paths make the same
+filtered state transition and only one can win it, so running both costs a wasted update at worst.
+`onboardingTapSource` records which one got there first.
+
+Neither path can tell a button tap from any other message the lead sends — and it does not matter:
+what the bot needs is the 24h window, and any inbound opens it.
 
 *Phase two* triggers the bot for anyone whose hour is up. The window is open by construction, so
 `chatbots/start` reaches them without the lead doing anything more:
