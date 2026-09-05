@@ -4,8 +4,12 @@ A WhatsApp drip for leads the sales team **could not reach**.
 
 The VSL funnel ends when the lead watches the video and is handed to sales. If sales calls and
 nobody answers, nothing used to happen. NR DRIP fills that gap: Bigin reports the call outcome,
-and a lead tagged `NR` is enrolled in a three-message sequence over **Day 0 / 1 / 3** that
-stops the moment they reply, are reached, or have the tag taken off.
+and a lead tagged `NR` gets a **single Day 0 message** that is called off if they reply, are
+reached, or have the tag taken off before it goes out.
+
+It used to be a three-message sequence over Day 0 / 1 / 3. The Day 1 (`nr2`) and Day 3 (`nr3`)
+follow-ups were dropped; the templates are still approved in WATI, so restoring them is an env
+change (see the cadence note below), not a code change.
 
 **The engine is no longer in this folder.** The state machine, the send path and the webhook
 decision tree live in [`dripcore/`](../dripcore) and are shared with every other tag campaign —
@@ -19,15 +23,25 @@ claim-before-send state machine as `lib/vslReminders.ts`.
 ## Before you switch it on
 
 **Every step needs a Meta-approved WhatsApp template.** WATI free-form messages only work
-within 24h of the lead's *last inbound message*. Day 1, 3 and 6 land well outside that. And the
+within 24h of the lead's *last inbound message*. Anything past Day 0 lands well outside that. And the
 cancel rule makes it near-circular: an open window means a recent inbound, which means the lead
 replied, which cancels the drip. So the session-message path is opportunistic only — the
 templates are what actually deliver. With `NR_DRIP_ENABLED=true` and no templates configured,
 leads simply park as `window_closed`.
 
-All three are approved and wired: `nr_bigin` on Day 0, `nr2` on Day 1, `nr3` on Day 3. Declare
-each template's real variables with `NR_DRIP_TEMPLATE_PARAMS_n` — the default is `name`, and
-`none` is how a step says the template takes no variables at all, which is the case for both
+`nr_bigin` on Day 0 is what runs today. `nr2` and `nr3` remain approved in WATI but are no longer
+sent — `NR_DRIP_STEP_OFFSETS=0` and `NR_DRIP_TEMPLATE_2` / `_3` are empty.
+
+Both keys are cleared deliberately, not just the offsets. Shortening the cadence alone stops NEW
+leads being scheduled past Day 0, but a lead already enrolled still carries a `dueAt` for Day 1
+and would be claimed when it arrives — sending whatever `TEMPLATE_2` held. Empty, that step reads
+as "not configured", so the runner skips it and completes the lead instead.
+
+To bring the follow-ups back, restore `NR_DRIP_STEP_OFFSETS=0,24,72` together with
+`NR_DRIP_TEMPLATE_2=nr2` and `NR_DRIP_TEMPLATE_3=nr3`.
+
+Declare each template's real variables with `NR_DRIP_TEMPLATE_PARAMS_n` — the default is `name`,
+and `none` is how a step says the template takes no variables at all, which is the case for both
 `nr2` and `nr3`. Sending a variable a template does not declare risks the message being rejected.
 
 ## Flow
@@ -73,7 +87,7 @@ Terminal states: `completed`, `cancelled` (replied / tag_changed / tag_removed /
 | `NR_DRIP_NR_OUTCOMES` | — | Comma-separated outcomes that mean "not reached", case-insensitive. Empty = nothing ever enrols. |
 | `NR_DRIP_STOP_OUTCOMES` | — | Tags that end the chase even when NR is also present. A contact can carry several tags; without this a lead tagged `NR,CWOS` is still chased. Outcome tags only — never descriptive ones like `Hot Lead`. |
 | `NR_DRIP_CANCEL_ON_TAG_CHANGE` | `true` | Any non-NR tag cancels an active drip. `false` = reply-only cancellation. (`NR_DRIP_CANCEL_ON_CONNECTED` is the old name, still honoured.) |
-| `NR_DRIP_STEP_OFFSETS` | `0,24,72` | Hours from enrolment per step. Length sets the step count. A step with no template configured is skipped, and the lead moves on to the next one. |
+| `NR_DRIP_STEP_OFFSETS` | `0` (was `0,24,72`) | Hours from enrolment per step. Length sets the step count. A step with no template configured is skipped, and the lead moves on to the next one. |
 | `NR_DRIP_STEP_OFFSETS_MINUTES` | — | Overrides the above. Testing only. |
 | `NR_DRIP_MESSAGE_1..3` | — | Session copy per step. Leave empty to always use the template. Supports `{{name}}`, `{{url}}`, literal `\n`. |
 | `NR_DRIP_TEMPLATE_1..3` | — | Approved template name per step. Required in practice. |

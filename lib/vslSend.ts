@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { getDb } from './mongodb'
-import { sendVslLink } from './wati'
+import { sendVslLink, sendVslLinkTemplate } from './wati'
 
 export type VslSendResult = {
   sent: boolean
@@ -10,7 +10,13 @@ export type VslSendResult = {
   error?: string
   definitive?: boolean
   reminderDueAt?: Date
+  onboardingDeadlineAt?: Date
 }
+
+// templateOnly: skip the free-form attempt and send the approved VSL template outright. That is
+// the contact-creation path — a lead who has just appeared in Bigin has never messaged us, so
+// their 24h window is closed and a session send could only fail.
+export type VslSendOptions = { templateOnly?: boolean }
 
 const MAX_SEND_ATTEMPTS = 3
 
@@ -31,10 +37,33 @@ function reminderDelayMs() {
   return (Number.isFinite(hours) && hours >= 0 ? hours : 23) * 3600_000
 }
 
+// How long AFTER THE LEAD TAPS the button in the VSL template the onboarding bot is triggered.
+// Not counted from our send: the tap is what opens the 24h window, and the window has to be open
+// for the chatbot API to reach them at all. Minutes win when set, so the delay can be dialled
+// down for testing without disturbing the production default.
+export function onboardingDelayMs() {
+  const minutes = Number(process.env.ONBOARDING_BOT_DELAY_MINUTES)
+  if (Number.isFinite(minutes) && minutes >= 0) return minutes * 60_000
+  const hours = Number(process.env.ONBOARDING_BOT_DELAY_HOURS)
+  return (Number.isFinite(hours) && hours >= 0 ? hours : 1) * 3600_000
+}
+
+// How often to look for the tap, and how long to keep looking. A lead who never taps is dropped
+// at the deadline rather than checked forever.
+export function tapCheckMs() {
+  const minutes = Number(process.env.ONBOARDING_BOT_TAP_CHECK_MINUTES)
+  return (Number.isFinite(minutes) && minutes >= 0 ? minutes : 30) * 60_000
+}
+
+function tapDeadlineMs() {
+  const hours = Number(process.env.ONBOARDING_BOT_TAP_DEADLINE_HOURS)
+  return (Number.isFinite(hours) && hours >= 0 ? hours : 24) * 3600_000
+}
+
 // Sends the VSL link and records that it was sent, as one operation. Everything that delivers
 // the link must go through here — a send that skips this leaves no linkSentAt, so no reminder
 // is ever scheduled and the lead silently falls out of the follow-up.
-export async function sendTrackedVslLink(phone: string, name: string): Promise<VslSendResult> {
+export async function sendTrackedVslLink(phone: string, name: string, options: VslSendOptions = {}): Promise<VslSendResult> {
   const db = await getDb()
   const leads = db.collection('vsl_leads')
   const now = new Date()
@@ -87,7 +116,10 @@ export async function sendTrackedVslLink(phone: string, name: string): Promise<V
     }
   }
 
-  const outcome = await sendVslLink(phone, String(claimed.name || name))
+  const leadName = String(claimed.name || name)
+  const outcome = options.templateOnly
+    ? await sendVslLinkTemplate(phone, leadName)
+    : await sendVslLink(phone, leadName)
 
   if (!outcome.ok) {
     if (outcome.definitive) {
@@ -109,16 +141,32 @@ export async function sendTrackedVslLink(phone: string, name: string): Promise<V
   // confirmed send keeps the reminder clock from starting for a message that never went out.
   const sentAt = new Date()
   const reminderDueAt = new Date(sentAt.getTime() + reminderDelayMs())
+  // The bot is NOT scheduled yet. vsl_final is a greeting with a button; WATI sends the tracked
+  // link only once the lead taps it, and that tap is also what opens the 24h window. So the lead
+  // goes into 'waiting' and the job watches for the tap — the bot is scheduled an hour after it
+  // actually happens, which is what keeps the window open when the chatbot API is finally called.
+  const onboardingCheckAt = new Date(sentAt.getTime() + tapCheckMs())
+  const onboardingDeadlineAt = new Date(sentAt.getTime() + tapDeadlineMs())
   await leads.updateOne(
     { phone },
     {
       // linkSendAttempts counts CONSECUTIVE failures, so a success clears it — otherwise a
       // lead who legitimately receives the link three times could never be sent it again.
-      $set: { linkSentAt: sentAt, linkSendStatus: 'sent', reminderState: 'due', reminderDueAt, linkSendAttempts: 0 },
+      $set: {
+        linkSentAt: sentAt,
+        linkSendStatus: 'sent',
+        reminderState: 'due',
+        reminderDueAt,
+        linkSendAttempts: 0,
+        onboardingState: 'waiting',
+        onboardingCheckAt,
+        onboardingDeadlineAt,
+        onboardingAttempts: 0,
+      },
       $max: { lastActivityAt: sentAt },
       $unset: { linkClaimedAt: '' },
     },
   )
 
-  return { sent: true, alreadySent: false, leadId: String(claimed.leadId), status: 'sent', reminderDueAt }
+  return { sent: true, alreadySent: false, leadId: String(claimed.leadId), status: 'sent', reminderDueAt, onboardingDeadlineAt }
 }

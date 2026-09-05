@@ -30,6 +30,8 @@ if (dupes.length) {
 await leads.createIndex({ phone: 1 }, { unique: true, name: 'phone_unique' })
 await leads.createIndex({ leadId: 1 }, { unique: true, name: 'leadId_unique' })
 await leads.createIndex({ reminderState: 1, reminderDueAt: 1 }, { name: 'reminder_queue' })
+await leads.createIndex({ onboardingState: 1, onboardingDueAt: 1 }, { name: 'onboarding_queue' })
+await leads.createIndex({ onboardingState: 1, onboardingCheckAt: 1 }, { name: 'onboarding_tap_watch' })
 
 console.log(`indexes on ${dbName}.vsl_leads:`, (await leads.indexes()).map((i) => i.name).join(', '))
 await client.close()

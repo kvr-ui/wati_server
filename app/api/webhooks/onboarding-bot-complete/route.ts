@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { resolveLead } from '@/lib/leads'
 import { normalizePhone } from '@/lib/phone'
-import { sendTrackedVslLink } from '@/lib/vslSend'
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -69,9 +68,14 @@ export async function POST(request: Request) {
     const normalizedPhone = normalizePhone(phone)
     const leadId = normalizedPhone ? (await resolveLead(normalizedPhone, name)).leadId : ''
 
+    // One spelling of the number across every collection. The contact webhooks now store the
+    // normalized form, so writing the raw digits here would silently miss the bigin_contacts
+    // document this lead already has — the update has no upsert, so it would simply do nothing.
+    const contactPhone = normalizedPhone || phone
+
     // 3. Store/update onboarding bot answers in MongoDB (upsert to prevent duplicates)
     await db.collection('onboarding_responses').updateOne(
-      { phone },
+      { phone: contactPhone },
       {
         $set: {
           name,
@@ -85,7 +89,7 @@ export async function POST(request: Request) {
 
     // 4. Update bigin_contacts with onboarding completion
     await db.collection('bigin_contacts').updateOne(
-      { phone },
+      { phone: contactPhone },
       {
         $set: {
           onboardingCompleted: true,
@@ -95,26 +99,16 @@ export async function POST(request: Request) {
       }
     )
 
-    // 5. Send the VSL link through the tracked sender, so the send is recorded and the
-    // non-opener reminder gets scheduled. Sending it inline here (as this route used to)
-    // delivered the message but left no linkSentAt, so no reminder could ever fire.
-    const isTemplateVariable = name.includes('{{') || name.includes('@') || phone.includes('{{') || phone.includes('@')
-
-    if (!isTemplateVariable && normalizedPhone) {
-      try {
-        const result = await sendTrackedVslLink(normalizedPhone, name)
-        console.log('VSL link send:', { phone: normalizedPhone, ...result })
-      } catch (error) {
-        console.error('Failed to send VSL link', error)
-      }
-    } else {
-      console.log('Skipped VSL link send - no valid phone')
-    }
-
+    // No VSL link is sent from here any more. The link now goes out on contact creation, an hour
+    // BEFORE the bot is triggered, so by the time a lead reaches this webhook they have already
+    // had it — sending it again would just be a duplicate.
+    //
+    // Nothing cancels a pending +1h bot trigger either: a lead who finds the bot on their own
+    // still gets the scheduled message, which is the agreed behaviour.
     return NextResponse.json({
       success: true,
       leadId,
-      message: 'Onboarding completed, VSL tracking link sent via WATI',
+      message: 'Onboarding completed, responses stored',
     })
   } catch (error) {
     console.error('Onboarding bot webhook failed', error)

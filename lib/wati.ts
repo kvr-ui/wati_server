@@ -43,37 +43,81 @@ export async function sendTemplate(templateName: string | undefined, phone: stri
   return { ok: true, data }
 }
 
-// The onboarding "Confirm" template. On the live path — left as it was.
-export async function sendWatiTemplateMessage(phone: string, name: string) {
+// Which variables a template actually declares. Sending one it does NOT declare gets the whole
+// message rejected by WATI, so this is per-template configuration rather than a constant — the
+// same contract as a drip step's TEMPLATE_PARAMS (see dripcore/config.ts).
+//
+//   unset  -> the defaults passed in
+//   'none' -> no variables at all
+//   'name,url' -> exactly those, in that order
+function templateParams(envVar: string, defaults: string[]) {
+  const raw = process.env[envVar]
+  if (raw === undefined || !raw.trim()) return defaults
+  if (raw.trim().toLowerCase() === 'none') return []
+  return raw.split(',').map((k) => k.trim()).filter(Boolean)
+}
+
+// Resolves the configured variable names against what we know about this lead, dropping any key
+// we cannot fill rather than sending it empty.
+function paramsFor(envVar: string, defaults: string[], available: Record<string, string>): TemplateParam[] {
+  return templateParams(envVar, defaults)
+    .filter((key) => key in available)
+    .map((key) => ({ name: key, value: available[key] }))
+}
+
+// The first message a new Bigin contact receives: an approved template that CARRIES the VSL link.
+// A contact created in the CRM has no open 24h window, so free-form is not an option here — the
+// template is the only thing that can reach them.
+//
+// Whether the link rides in a URL button (with `phone` as the dynamic suffix) or in the body (as
+// `url`) is decided by WATI_VSL_TEMPLATE_PARAMS, not by this code.
+export async function sendVslLinkTemplate(phone: string, name: string): Promise<SendOutcome> {
+  const available = { name: name || 'there', phone, url: buildVslUrl(phone, name) }
+  const parameters = paramsFor('WATI_VSL_TEMPLATE_PARAMS', ['name', 'phone'], available)
+  return sendTemplate(process.env.WATI_VSL_TEMPLATE_NAME, phone, parameters)
+}
+
+// The "Confirm" template. Tapping/sending Confirm is what fires the onboarding chatbot's keyword
+// trigger inside WATI — this template is the only way to reach a lead whose 24h window has closed.
+export async function sendOnboardingTemplate(phone: string, name: string): Promise<SendOutcome> {
+  const parameters = paramsFor('WATI_ONBOARDING_TEMPLATE_PARAMS', ['name'], { name: name || 'there', phone })
+  return sendTemplate(process.env.WATI_ONBOARDING_TEMPLATE_NAME, phone, parameters)
+}
+
+// Starts the onboarding chatbot flow directly, no keyword needed.
+//
+// The flow's first message is free-form, so this only REACHES the lead inside the 24h window —
+// and WATI answers result:true for "flow started", not for "message delivered". A call against a
+// closed window therefore looks like a success while the lead receives nothing (and still burns a
+// billable chatbot session), which is why callers must check the window themselves first rather
+// than trusting this outcome.
+export async function startChatbot(phone: string): Promise<SendOutcome> {
   const baseUrl = process.env.WATI_API_URL
   const token = process.env.WATI_TOKEN
-  const templateName = process.env.WATI_TEMPLATE_NAME
-
-  if (!baseUrl || !token || !templateName) {
-    throw new Error('WATI is not configured (WATI_API_URL / WATI_TOKEN / WATI_TEMPLATE_NAME)')
-  }
+  const chatbotId = process.env.WATI_CHATBOT_ID
+  if (!baseUrl || !token) return { ok: false, definitive: true, error: 'WATI is not configured (WATI_API_URL / WATI_TOKEN)' }
+  if (!chatbotId) return { ok: false, definitive: true, error: 'WATI_CHATBOT_ID is not configured' }
 
   if (dryRun()) {
-    console.log('[WATI dry-run] template', templateName, '->', phone, JSON.stringify({ name }))
-    return { dryRun: true }
+    console.log('[WATI dry-run] start chatbot', chatbotId, '->', phone)
+    return { ok: true, data: { dryRun: true } }
   }
 
-  const url = `${baseUrl}/api/v1/sendTemplateMessage?whatsappNumber=${encodeURIComponent(phone)}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      template_name: templateName,
-      broadcast_name: `zoho_flow_${Date.now()}`,
-      parameters: [{ name: 'name', value: name }],
-    }),
-  })
+  const url = `${baseUrl}/api/v1/chatbots/start`
+    + `?chatbotId=${encodeURIComponent(chatbotId)}`
+    + `&whatsappNumber=${encodeURIComponent(phone)}`
+
+  let res: Response
+  try {
+    res = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+  } catch (error) {
+    return { ok: false, definitive: false, error: String((error as Error)?.message || error).slice(0, 300) }
+  }
 
   const data = await res.json().catch(() => null)
-  if (!res.ok || data?.result === false) {
-    throw new Error(`WATI send failed: ${res.status} ${JSON.stringify(data)}`)
-  }
-  return data
+  if (res.status >= 500) return { ok: false, definitive: false, error: `WATI ${res.status} ${JSON.stringify(data)}`.slice(0, 300) }
+  if (!res.ok || data?.result === false) return { ok: false, definitive: true, error: `WATI ${res.status} ${JSON.stringify(data)}`.slice(0, 300) }
+  return { ok: true, data }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -167,12 +211,14 @@ export async function sessionWindowRemainingMs(phone: string): Promise<number | 
 
 // Sends free-form inside the window, and only falls back to an approved template when the
 // window has closed and one is configured.
-async function sendLinkMessage(phone: string, name: string, text: string, fallbackTemplate?: string): Promise<SendOutcome> {
+async function sendLinkMessage(phone: string, name: string, text: string, fallbackTemplate: string | undefined, paramsEnvVar: string): Promise<SendOutcome> {
   const session = await sendSessionMessage(phone, text)
   if (session.ok) return session
   if (fallbackTemplate) {
     console.warn('session message rejected, falling back to template', fallbackTemplate, session.error)
-    return sendTemplate(fallbackTemplate, phone, [{ name: 'name', value: name || 'there' }, { name: 'phone', value: phone }])
+    // Only the variables this template declares — an undeclared one gets the send rejected.
+    const available = { name: name || 'there', phone, url: buildVslUrl(phone, name) }
+    return sendTemplate(fallbackTemplate, phone, paramsFor(paramsEnvVar, ['name', 'phone'], available))
   }
   return session
 }
@@ -190,12 +236,12 @@ export async function sendVslLink(phone: string, name: string): Promise<SendOutc
   const url = buildVslUrl(phone, name)
   const text = messageBody('VSL_LINK_MESSAGE', name, url)
   if (!text) return { ok: false, definitive: true, error: 'VSL_LINK_MESSAGE is not configured' }
-  return sendLinkMessage(phone, name, text, process.env.WATI_VSL_TEMPLATE_NAME)
+  return sendLinkMessage(phone, name, text, process.env.WATI_VSL_TEMPLATE_NAME, 'WATI_VSL_TEMPLATE_PARAMS')
 }
 
 export async function sendVslReminder(phone: string, name: string): Promise<SendOutcome> {
   const url = buildVslUrl(phone, name)
   const text = messageBody('VSL_REMINDER_MESSAGE', name, url)
   if (!text) return { ok: false, definitive: true, error: 'VSL_REMINDER_MESSAGE is not configured' }
-  return sendLinkMessage(phone, name, text, process.env.WATI_REMINDER_TEMPLATE_NAME)
+  return sendLinkMessage(phone, name, text, process.env.WATI_REMINDER_TEMPLATE_NAME, 'WATI_REMINDER_TEMPLATE_PARAMS')
 }
