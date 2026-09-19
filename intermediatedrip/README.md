@@ -50,17 +50,17 @@ but a campaign with no templates at all enrols leads and sends them nothing.
 
 ### Step 1
 
-`INTERMEDIATE_DRIP_TEMPLATE_1=intermdiate_bigin_final` — APPROVED on WATI, English (US), and it
-declares exactly **one** variable, `name`, filling `{{1}}` in "Hi {{1}}". That is why
+`INTERMEDIATE_DRIP_TEMPLATE_1=intermediate_tag_final_2026` — APPROVED on WATI, English (US), and
+it declares exactly **one** variable, `name`, filling `{{1}}` in "Hi {{1}}". That is why
 `INTERMEDIATE_DRIP_TEMPLATE_PARAMS_1=name`: passing anything the template does not declare risks
-WATI rejecting the send outright.
+WATI rejecting the send outright. Copy template names from WATI, never retype them.
 
-**The misspelling is the real template name.** It is `intermdiate`, not `intermediate`. Correcting
-it here would point the campaign at a template that does not exist, and every send would be
-rejected. Copy the name from WATI, never retype it.
+Its header is the CA Intermediate brochure (PDF) and it ends in an *Intermediate demo video*
+quick-reply button, so the lead can ask for the videos in one tap. Whatever answers that tap on
+WATI must match the new button text.
 
-It replaced `intermediate_wati_updated`, which carries the same body. What this one adds is a
-footer and a *Demo Videos* quick-reply button, so the lead can ask for the videos in one tap.
+It replaced `intermdiate_bigin_final` (misspelled on WATI, same body, a *Demo Videos* button),
+which itself replaced `intermediate_wati_updated`.
 
 The cadence is `INTERMEDIATE_DRIP_STEP_OFFSETS=0` — **one message, sent immediately on enrolment**.
 Add `INTERMEDIATE_DRIP_TEMPLATE_2` and widen the offsets (`0,24`) when a Day 1 message exists.
