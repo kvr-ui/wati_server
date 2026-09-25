@@ -39,8 +39,10 @@ export async function POST(request: Request) {
   const rawName = body.name ?? body.NAME ?? body.Name
   const rawPhoneValue = body.phone ?? body.PHONE_NUMBER ?? body.Phone
   const email = body.email ?? body.EMAIL ?? body.Email
-  const caStatus = label(body.CA_Status ?? body.ca_status ?? body.caStatus)
-  const leadSource = label(body.Lead_Source ?? body.lead_source ?? body.leadSource)
+  // The contact-created webhook sends these as LEAD_SOURCE / CA_STATUS; Bigin's own record uses the
+  // API names (the custom lead-source field is Lead_Source1). Accept every spelling seen.
+  const caStatus = label(body.CA_STATUS ?? body.CA_Status ?? body.ca_status ?? body.caStatus)
+  const leadSource = label(body.LEAD_SOURCE ?? body.Lead_Source1 ?? body.Lead_Source ?? body.lead_source ?? body.leadSource)
 
   const name = typeof rawName === 'string' ? rawName.trim().slice(0, 100) : ''
 
