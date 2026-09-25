@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { isExcludedLead } from './leadSource'
 import { getDb } from './mongodb'
 import { sendVslLink, sendVslLinkTemplate } from './wati'
 
@@ -74,6 +75,12 @@ function tapDeadlineMs() {
 // the link must go through here — a send that skips this leaves no linkSentAt, so no reminder
 // is ever scheduled and the lead silently falls out of the follow-up.
 export async function sendTrackedVslLink(phone: string, name: string, options: VslSendOptions = {}): Promise<VslSendResult> {
+  // Foundation School leads get no WhatsApp. Checked before the lead record is touched, so nothing
+  // is created that would later schedule a reminder or the onboarding bot.
+  if (await isExcludedLead(phone)) {
+    return { sent: false, alreadySent: false, leadId: null, status: 'excluded' }
+  }
+
   const db = await getDb()
   const leads = db.collection('vsl_leads')
   const now = new Date()

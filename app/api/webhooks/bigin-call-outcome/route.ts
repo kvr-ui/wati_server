@@ -4,9 +4,10 @@ import type { EnrollResult } from '@/dripcore/types'
 import type { TagWebhookInput } from '@/dripcore/webhook'
 import { handleTagWebhook } from '@/dripcore/webhook'
 import { runDripBatch } from '@/dripcore/runner'
-import { requeueNow } from '@/dripcore/enroll'
+import { cancelDrip, requeueNow } from '@/dripcore/enroll'
 import { ALL_DRIPS } from '@/lib/drips'
 import type { DripConfig } from '@/dripcore/config'
+import { isExcludedLead, recordLeadSource, readLeadSource } from '@/lib/leadSource'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -185,6 +186,25 @@ export async function POST(request: Request) {
   if (!phone) {
     console.warn(`${TAG} no usable phone — nothing to do`)
     return reply(200, { success: true, action: 'ignored', detail: 'no usable phone in payload', receivedKeys: Object.keys(body) })
+  }
+
+  // Foundation School leads get no WhatsApp at all. The source is recorded first so the stored
+  // value — which the scheduled jobs check — follows Bigin, then checked from the store so a
+  // payload that does not carry the field still respects one recorded earlier. Any drip already
+  // running for them is stopped rather than left to send its remaining steps.
+  const leadSource = readLeadSource(body)
+  try {
+    await recordLeadSource(phone, leadSource)
+    if (await isExcludedLead(phone)) {
+      const stopped: string[] = []
+      for (const cfg of ALL_DRIPS) {
+        if (await cancelDrip(cfg, phone, 'lead_source')) stopped.push(cfg.campaign.id)
+      }
+      return reply(200, { success: true, action: 'ignored', phone, detail: 'Foundation School lead, no WhatsApp', stopped })
+    }
+  } catch (error) {
+    console.error(`${TAG} lead source check failed`, error)
+    return reply(502, { error: 'Failed to check lead source' })
   }
 
   const input: TagWebhookInput = { phone, name, outcome, callId, tagFieldPresent }

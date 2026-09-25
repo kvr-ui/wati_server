@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { normalizePhone } from '@/lib/phone'
 import { sendTrackedVslLink } from '@/lib/vslSend'
+import { isExcludedLeadSource, readLeadSource } from '@/lib/leadSource'
 
 // How much of the payload is written to the log. This endpoint is unauthenticated, so the cap is
 // what stops a stranger using the log as free disk space.
@@ -39,10 +40,9 @@ export async function POST(request: Request) {
   const rawName = body.name ?? body.NAME ?? body.Name
   const rawPhoneValue = body.phone ?? body.PHONE_NUMBER ?? body.Phone
   const email = body.email ?? body.EMAIL ?? body.Email
-  // The contact-created webhook sends these as LEAD_SOURCE / CA_STATUS; Bigin's own record uses the
-  // API names (the custom lead-source field is Lead_Source1). Accept every spelling seen.
+  // The contact-created webhook sends this as CA_STATUS; Bigin's own record uses CA_Status.
   const caStatus = label(body.CA_STATUS ?? body.CA_Status ?? body.ca_status ?? body.caStatus)
-  const leadSource = label(body.LEAD_SOURCE ?? body.Lead_Source1 ?? body.Lead_Source ?? body.lead_source ?? body.leadSource)
+  const leadSource = readLeadSource(body)
 
   const name = typeof rawName === 'string' ? rawName.trim().slice(0, 100) : ''
 
@@ -82,8 +82,9 @@ export async function POST(request: Request) {
     )
 
     // Foundation School leads are stored but never messaged. Returning before the tracked sender
-    // also means no vsl_leads record, so no reminder or onboarding bot is scheduled for them.
-    if (leadSource.toLowerCase() === 'foundation school') {
+    // also means no vsl_leads record, so no reminder or onboarding bot is scheduled for them. The
+    // leadSource stored above is what the scheduled jobs check if one is created some other way.
+    if (isExcludedLeadSource(leadSource)) {
       console.log('VSL link skipped (Foundation School lead):', { phone })
       return NextResponse.json({ success: true, message: 'Contact stored; Foundation School lead, no WhatsApp message sent' })
     }
@@ -103,6 +104,11 @@ export async function POST(request: Request) {
     // misconfigured deploy look healthy while every lead silently receives nothing. `sending`
     // is excluded: that is a concurrent duplicate of this webhook, and the other caller is
     // mid-send.
+    // A lead source recorded earlier (the scheduled jobs' check) can exclude a lead this payload did
+    // not describe. That is a deliberate skip, not a failure to retry.
+    if (result.status === 'excluded') {
+      return NextResponse.json({ success: true, message: 'Contact stored; Foundation School lead, no WhatsApp message sent' })
+    }
     if (result.error) {
       return NextResponse.json({ error: 'Contact stored but VSL message failed', definitive: result.definitive }, { status: 502 })
     }

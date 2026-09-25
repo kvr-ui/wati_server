@@ -1,3 +1,4 @@
+import { isExcludedLead } from '@/lib/leadSource'
 import { getDb } from '@/lib/mongodb'
 import { istHour } from '@/lib/vslReminders'
 import { getLastInboundAt } from '@/lib/wati'
@@ -123,6 +124,18 @@ export async function runDripBatch(
       )
       result.cancelled++
       result.leads.push({ phone, step, outcome: 'cancelled-replied' })
+      continue
+    }
+
+    // Foundation School leads get no WhatsApp. Normally caught at enrolment, but the lead source
+    // can be set in Bigin after a drip has already started.
+    if (await isExcludedLead(phone)) {
+      await drips.updateOne(
+        { _id: lead._id, state: 'claimed' },
+        { $set: { state: 'cancelled', cancelledAt: new Date(), cancelReason: 'lead_source' }, $unset: { claimedAt: '' } },
+      )
+      result.cancelled++
+      result.leads.push({ phone, step, outcome: 'cancelled-lead-source' })
       continue
     }
 

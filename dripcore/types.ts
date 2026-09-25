@@ -51,7 +51,7 @@ export type DripDoc = {
   lastCallAt?: Date
 }
 
-export type DripCancelReason = 'replied' | 'tag_changed' | 'tag_removed' | 'manual'
+export type DripCancelReason = 'replied' | 'tag_changed' | 'tag_removed' | 'manual' | 'lead_source'
 
 // What the Bigin webhook told us about one contact, as far as ONE campaign is concerned.
 // `isTrigger` is campaign-specific: the same payload is a trigger for NR and not for Intermediate.

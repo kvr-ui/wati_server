@@ -1,4 +1,5 @@
 import type { Collection, Document } from 'mongodb'
+import { isExcludedLead } from './leadSource'
 import { getDb } from './mongodb'
 import { istHour } from './vslReminders'
 import { onboardingDelayMs, tapCheckMs } from './vslSend'
@@ -222,6 +223,17 @@ export async function runOnboardingBotBatch(options: { dryRun?: boolean } = {}):
     result.claimed++
 
     const phone = String(lead.phone)
+
+    // Foundation School leads get no WhatsApp, and so no onboarding bot. Parked, not failed.
+    if (await isExcludedLead(phone)) {
+      await leads.updateOne(
+        { _id: lead._id, onboardingState: 'claimed' },
+        { $set: { onboardingState: 'excluded', onboardingSkippedAt: new Date(), onboardingError: 'Foundation School lead' }, $unset: { onboardingClaimedAt: '' } },
+      )
+      result.leads.push({ phone, leadId: String(lead.leadId), outcome: 'skipped-lead-source' })
+      continue
+    }
+
     const outcome = await triggerOnboardingBot(phone, String(lead.name || ''))
 
     if (!outcome.ok && 'windowClosed' in outcome) {

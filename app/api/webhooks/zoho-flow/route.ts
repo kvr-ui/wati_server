@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { normalizePhone } from '@/lib/phone'
 import { sendTrackedVslLink } from '@/lib/vslSend'
+import { isExcludedLeadSource, readLeadSource } from '@/lib/leadSource'
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -15,6 +16,7 @@ export async function POST(request: Request) {
   const rawName = body.name ?? body.NAME ?? body.Name ?? body.Full_Name ?? body.first_name
   const rawPhoneValue = body.phone ?? body.PHONE_NUMBER ?? body.Phone ?? body.phoneNumber ?? body.mobile
   const email = body.email ?? body.EMAIL ?? body.Email
+  const leadSource = readLeadSource(body)
 
   // Validate data
   const name = typeof rawName === 'string' ? rawName.trim().slice(0, 100) : ''
@@ -47,10 +49,18 @@ export async function POST(request: Request) {
           email: typeof email === 'string' ? email : '',
           source: 'bigin_webhook',
           createdAt: new Date(),
+          // Only when sent: a re-fire from a flow that does not map it must not wipe it.
+          ...(leadSource ? { leadSource } : {}),
         },
       },
       { upsert: true }
     )
+
+    // Foundation School leads are stored but never messaged — same rule as bigin-contact-created.
+    if (isExcludedLeadSource(leadSource)) {
+      console.log('VSL link skipped (Foundation School lead):', { phone })
+      return NextResponse.json({ success: true, message: 'Contact stored; Foundation School lead, no WhatsApp message sent' })
+    }
 
     // 2. Send the VSL link. templateOnly because a contact who has just appeared in Bigin has
     // never messaged us, so their 24h window is closed. The tracked sender records linkSentAt,
@@ -66,6 +76,11 @@ export async function POST(request: Request) {
     // misconfigured deploy look healthy while every lead silently receives nothing. `sending`
     // is excluded: that is a concurrent duplicate of this webhook, and the other caller is
     // mid-send.
+    // A lead source recorded earlier (the scheduled jobs' check) can exclude a lead this payload did
+    // not describe. That is a deliberate skip, not a failure to retry.
+    if (result.status === 'excluded') {
+      return NextResponse.json({ success: true, message: 'Contact stored; Foundation School lead, no WhatsApp message sent' })
+    }
     if (result.error) {
       return NextResponse.json({ error: 'Contact stored but VSL message failed', definitive: result.definitive }, { status: 502 })
     }

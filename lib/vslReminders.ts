@@ -1,3 +1,4 @@
+import { isExcludedLead } from './leadSource'
 import { getDb } from './mongodb'
 import { sendVslReminder, sessionWindowRemainingMs } from './wati'
 
@@ -99,8 +100,9 @@ export async function runVslReminderBatch(options: { dryRun?: boolean } = {}): P
 
     // Close the claim-to-send race: the lead may have engaged in the last few milliseconds,
     // in which case the cancel update could not match 'claimed'.
+    // Foundation School leads get no WhatsApp at all, so the reminder is cancelled like an engaged one.
     const fresh = await leads.findOne({ _id: lead._id }, { projection: { [engagedField]: 1 } })
-    if (fresh?.[engagedField]) {
+    if (fresh?.[engagedField] || await isExcludedLead(String(lead.phone))) {
       await leads.updateOne(
         { _id: lead._id, reminderState: 'claimed' },
         { $set: { reminderState: 'cancelled', reminderCancelledAt: new Date() } },

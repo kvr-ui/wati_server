@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { resolveLead } from '@/lib/leads'
 import { normalizePhone } from '@/lib/phone'
+import { isExcludedLead } from '@/lib/leadSource'
 import { renderMessage, sendSessionMessage } from '@/lib/wati'
 
 export async function POST(request: Request) {
@@ -120,9 +121,14 @@ export async function POST(request: Request) {
     const closingCopy = process.env.ONBOARDING_COMPLETE_MESSAGE
     if (closingCopy?.trim() && normalizedPhone) {
       try {
-        const text = renderMessage(closingCopy, name, '')
-        const outcome = await sendSessionMessage(normalizedPhone, text)
-        if (!outcome.ok) console.error('Onboarding closing message failed', { phone: normalizedPhone, error: outcome.error })
+        // Foundation School leads get no WhatsApp from us, closing message included.
+        if (await isExcludedLead(normalizedPhone)) {
+          console.log('Onboarding closing message skipped (Foundation School lead):', { phone: normalizedPhone })
+        } else {
+          const text = renderMessage(closingCopy, name, '')
+          const outcome = await sendSessionMessage(normalizedPhone, text)
+          if (!outcome.ok) console.error('Onboarding closing message failed', { phone: normalizedPhone, error: outcome.error })
+        }
       } catch (error) {
         console.error('Onboarding closing message threw', error)
       }
