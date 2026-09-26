@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { normalizePhone } from '@/lib/phone'
 import { sendTrackedVslLink } from '@/lib/vslSend'
-import { isExcludedLeadSource, readLeadSource, recordLeadSource } from '@/lib/leadSource'
+import { isOnboardingExcludedLeadSource, readLeadSource, recordLeadSource } from '@/lib/leadSource'
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -56,10 +56,10 @@ export async function POST(request: Request) {
     // Set when sent, cleared when sent empty, untouched when the payload does not carry it.
     await recordLeadSource(phone, leadSource)
 
-    // Foundation School leads are stored but never messaged — same rule as bigin-contact-created.
-    if (isExcludedLeadSource(leadSource)) {
-      console.log('VSL link skipped (Foundation School lead):', { phone })
-      return NextResponse.json({ success: true, message: 'Contact stored; Foundation School lead, no WhatsApp message sent' })
+    // Foundation School and FS - PAID leads get no VSL message — same rule as bigin-contact-created.
+    if (isOnboardingExcludedLeadSource(leadSource)) {
+      console.log('VSL link skipped (excluded lead source):', { phone, leadSource })
+      return NextResponse.json({ success: true, message: 'Contact stored; excluded lead source, no VSL message sent' })
     }
 
     // 2. Send the VSL link. templateOnly because a contact who has just appeared in Bigin has
@@ -79,7 +79,7 @@ export async function POST(request: Request) {
     // A lead source recorded earlier (the scheduled jobs' check) can exclude a lead this payload did
     // not describe. That is a deliberate skip, not a failure to retry.
     if (result.status === 'excluded') {
-      return NextResponse.json({ success: true, message: 'Contact stored; Foundation School lead, no WhatsApp message sent' })
+      return NextResponse.json({ success: true, message: 'Contact stored; excluded lead source, no VSL message sent' })
     }
     if (result.error) {
       return NextResponse.json({ error: 'Contact stored but VSL message failed', definitive: result.definitive }, { status: 502 })

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { normalizePhone } from '@/lib/phone'
 import { sendTrackedVslLink } from '@/lib/vslSend'
-import { isExcludedLeadSource, readLeadSource, recordLeadSource } from '@/lib/leadSource'
+import { isOnboardingExcludedLeadSource, readLeadSource, recordLeadSource } from '@/lib/leadSource'
 
 // How much of the payload is written to the log. This endpoint is unauthenticated, so the cap is
 // what stops a stranger using the log as free disk space.
@@ -82,12 +82,12 @@ export async function POST(request: Request) {
     // Set when sent, cleared when sent empty, untouched when the payload does not carry it.
     await recordLeadSource(phone, leadSource)
 
-    // Foundation School leads are stored but never messaged. Returning before the tracked sender
+    // Foundation School and FS - PAID leads get no VSL message. Returning before the tracked sender
     // also means no vsl_leads record, so no reminder or onboarding bot is scheduled for them. The
     // leadSource stored above is what the scheduled jobs check if one is created some other way.
-    if (isExcludedLeadSource(leadSource)) {
-      console.log('VSL link skipped (Foundation School lead):', { phone })
-      return NextResponse.json({ success: true, message: 'Contact stored; Foundation School lead, no WhatsApp message sent' })
+    if (isOnboardingExcludedLeadSource(leadSource)) {
+      console.log('VSL link skipped (excluded lead source):', { phone, leadSource })
+      return NextResponse.json({ success: true, message: 'Contact stored; excluded lead source, no VSL message sent' })
     }
 
     // The first message carries the VSL link. templateOnly because a contact who has just
@@ -108,7 +108,7 @@ export async function POST(request: Request) {
     // A lead source recorded earlier (the scheduled jobs' check) can exclude a lead this payload did
     // not describe. That is a deliberate skip, not a failure to retry.
     if (result.status === 'excluded') {
-      return NextResponse.json({ success: true, message: 'Contact stored; Foundation School lead, no WhatsApp message sent' })
+      return NextResponse.json({ success: true, message: 'Contact stored; excluded lead source, no VSL message sent' })
     }
     if (result.error) {
       return NextResponse.json({ error: 'Contact stored but VSL message failed', definitive: result.definitive }, { status: 502 })
