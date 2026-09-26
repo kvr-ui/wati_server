@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { normalizePhone } from '@/lib/phone'
 import { sendTrackedVslLink } from '@/lib/vslSend'
-import { isExcludedLeadSource, readLeadSource } from '@/lib/leadSource'
+import { isExcludedLeadSource, readLeadSource, recordLeadSource } from '@/lib/leadSource'
 
 // How much of the payload is written to the log. This endpoint is unauthenticated, so the cap is
 // what stops a stranger using the log as free disk space.
@@ -73,13 +73,14 @@ export async function POST(request: Request) {
           email: typeof email === 'string' ? email : '',
           source: 'bigin_webhook',
           createdAt: new Date(),
-          // Only when sent: a re-fire from a flow that does not map these must not wipe them.
+          // Only when sent: a re-fire from a flow that does not map it must not wipe it.
           ...(caStatus ? { caStatus } : {}),
-          ...(leadSource ? { leadSource } : {}),
         },
       },
       { upsert: true }
     )
+    // Set when sent, cleared when sent empty, untouched when the payload does not carry it.
+    await recordLeadSource(phone, leadSource)
 
     // Foundation School leads are stored but never messaged. Returning before the tracked sender
     // also means no vsl_leads record, so no reminder or onboarding bot is scheduled for them. The

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/mongodb'
 import { normalizePhone } from '@/lib/phone'
 import { sendTrackedVslLink } from '@/lib/vslSend'
-import { isExcludedLeadSource, readLeadSource } from '@/lib/leadSource'
+import { isExcludedLeadSource, readLeadSource, recordLeadSource } from '@/lib/leadSource'
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -49,12 +49,12 @@ export async function POST(request: Request) {
           email: typeof email === 'string' ? email : '',
           source: 'bigin_webhook',
           createdAt: new Date(),
-          // Only when sent: a re-fire from a flow that does not map it must not wipe it.
-          ...(leadSource ? { leadSource } : {}),
         },
       },
       { upsert: true }
     )
+    // Set when sent, cleared when sent empty, untouched when the payload does not carry it.
+    await recordLeadSource(phone, leadSource)
 
     // Foundation School leads are stored but never messaged — same rule as bigin-contact-created.
     if (isExcludedLeadSource(leadSource)) {
