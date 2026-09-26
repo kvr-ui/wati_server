@@ -17,11 +17,26 @@ export type DripState =
 
 export type DripChannel = 'session' | 'template'
 
+// What WATI's own message history says became of a template send. WATI answers `result: true`
+// as soon as it accepts a send, before Meta has a say, so acceptance alone proves nothing.
+//   delivered — in WATI's history and not failed
+//   failed    — in WATI's history as FAILED (usually Meta's marketing-message limit)
+//   missing   — accepted by WATI but never appeared in its history at all
+export type DripDeliveryStatus = 'delivered' | 'failed' | 'missing'
+
 export type DripStepLog = {
   index: number
   sentAt: Date
   channel: DripChannel
+  // The template this step was sent with, so the delivery check knows what to look for even
+  // after the campaign's env has moved on to a different template.
+  template?: string
   error?: string
+  delivery?: DripDeliveryStatus
+  deliveryDetail?: string
+  deliveryCheckedAt?: Date
+  // Set once a retry has been queued for this entry, so it is never queued twice.
+  retryQueued?: boolean
 }
 
 export type DripDoc = {
@@ -40,6 +55,7 @@ export type DripDoc = {
   steps: DripStepLog[]
 
   attempts: number      // consecutive failures on the current step
+  deliveryRetries?: number  // re-sends queued by the delivery check, capped per lead
   claimedAt?: Date
   lastError?: string
   cancelledAt?: Date

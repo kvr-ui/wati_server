@@ -161,6 +161,38 @@ export function makeDripConfig(campaign: DripCampaign) {
       return num('STALE_MINUTES', 15) * 60_000
     },
 
+    // The delivery check (dripcore/delivery.ts). WATI accepting a send is not delivery: Meta can
+    // still refuse it, and WATI has been seen to accept a send and then never record it at all.
+    deliveryCheckEnabled() {
+      return raw('DELIVERY_CHECK') !== 'false'
+    },
+
+    // How long after sending before a message missing from WATI's history counts as lost. WATI
+    // usually records a send within seconds; this margin is what stops a slow day from causing
+    // a duplicate.
+    deliveryMissingAfterMs() {
+      return num('DELIVERY_MISSING_AFTER_MINUTES', 20) * 60_000
+    },
+
+    // Only sends this recent are checked, which bounds the WATI calls per run.
+    deliveryLookbackMs() {
+      return num('DELIVERY_LOOKBACK_HOURS', 24) * 3600_000
+    },
+
+    // Meta's own advice for its marketing limit is "retry again in a few days".
+    deliveryMetaRetryMs() {
+      return num('DELIVERY_META_RETRY_HOURS', 48) * 3600_000
+    },
+
+    deliveryMissingRetryMs() {
+      return num('DELIVERY_MISSING_RETRY_MINUTES', 5) * 60_000
+    },
+
+    // Re-sends per lead, across every step, so a lead Meta keeps refusing is not chased forever.
+    deliveryMaxRetries() {
+      return num('DELIVERY_MAX_RETRIES', 2)
+    },
+
     reclaimStale() {
       return raw('RECLAIM_STALE') === 'true'
     },

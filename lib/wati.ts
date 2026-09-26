@@ -202,6 +202,38 @@ export async function getLastInboundAt(phone: string): Promise<Date | undefined>
   }
 }
 
+export type TemplateHistoryEntry = { template: string; created: Date; status: string; failedDetail: string }
+
+// The template messages WATI has recorded for a phone, newest first. undefined when WATI could not
+// be asked — callers must treat that as "unknown", never as "nothing was sent".
+export async function getTemplateHistory(phone: string): Promise<TemplateHistoryEntry[] | undefined> {
+  const baseUrl = process.env.WATI_API_URL
+  const token = process.env.WATI_TOKEN
+  if (!baseUrl || !token || dryRun()) return undefined
+
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/getMessages/${encodeURIComponent(phone)}?pageSize=100`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return undefined
+    const json = await res.json().catch(() => null)
+    const items = json?.messages?.items
+    if (!Array.isArray(items)) return undefined
+    const out: TemplateHistoryEntry[] = []
+    for (const m of items) {
+      if (m?.eventType !== 'broadcastMessage') continue
+      // WATI only names the template inside the event text: 'Broadcast message with using "nr_bigin" template …'
+      const template = /"([^"]+)"/.exec(String(m.eventDescription || ''))?.[1]
+      const created = new Date(m.created || '')
+      if (!template || Number.isNaN(created.getTime())) continue
+      out.push({ template, created, status: String(m.statusString || ''), failedDetail: String(m.failedDetail || '') })
+    }
+    return out
+  } catch {
+    return undefined
+  }
+}
+
 // How long is left on the lead's 24h window. Negative means it has closed.
 export async function sessionWindowRemainingMs(phone: string): Promise<number | undefined> {
   const lastInbound = await getLastInboundAt(phone)

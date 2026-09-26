@@ -4,7 +4,7 @@ import type { DripConfig } from './config'
 import type { DripChannel } from './types'
 
 export type StepSendResult =
-  | { ok: true; channel: DripChannel }
+  | { ok: true; channel: DripChannel; template?: string }
   // Nothing is configured for this step yet. Not a failure of this lead — the runner moves them
   // on to the next step rather than parking them, so a step whose template has not been created
   // yet cannot permanently end someone's sequence.
@@ -74,6 +74,6 @@ export async function sendDripStep(
     .map((key) => ({ name: key, value: available[key] }))
 
   const outcome = await sendTemplate(template, phone, parameters)
-  if (outcome.ok) return { ok: true, channel: 'template' }
+  if (outcome.ok) return { ok: true, channel: 'template', template }
   return { ok: false, definitive: outcome.definitive, error: outcome.error }
 }

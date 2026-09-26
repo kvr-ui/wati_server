@@ -156,7 +156,7 @@ export async function runDripBatch(
         { _id: lead._id, state: 'claimed' },
         {
           $set: advance,
-          $push: { steps: { index: step, sentAt, channel: outcome.channel } },
+          $push: { steps: { index: step, sentAt, channel: outcome.channel, ...(outcome.template ? { template: outcome.template } : {}) } },
           $unset: { claimedAt: '', lastError: '' },
         },
       )

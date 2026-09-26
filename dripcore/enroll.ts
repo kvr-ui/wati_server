@@ -168,6 +168,7 @@ export async function enrollFromTagOutcome(cfg: DripConfig, call: TagOutcome): P
         dueAt,
         steps: [],
         attempts: 0,
+        deliveryRetries: 0,
         lastCallAt: now,
       },
       // A re-enrolment must not inherit the previous run's failure diagnostics.
