@@ -9,9 +9,11 @@ or cancels accordingly.
 
 ## What it sends
 
-`WORKOUT_DRIP_TEMPLATE_1=workout_batch_oct14` — approved on WATI, marketing category. It pitches
-the Last Attempt Workout Batch: 1:10 tutoring, the question bank, the test series with video
-review and the study planner, with a button to the class demo.
+`WORKOUT_DRIP_TEMPLATE_1=workout_batch_broucher_oct23` — approved on WATI, marketing category. It
+pitches the Last Attempt Workout Batch: 1:10 tutoring, the question bank, the test series with
+video review and the study planner, with a button to the class demo. The brochure PDF is the
+template's document header, stored on WATI, so the app sends no media of its own. It replaced
+`workout_batch_oct14` (same text, older brochure) on 2026-10-23.
 
 It declares one variable, `{{1}}` = the lead's name, so `WORKOUT_DRIP_TEMPLATE_PARAMS_1=name`.
 Sending a variable a template does not declare gets the message rejected, so change this if the
@@ -30,7 +32,7 @@ WORKOUT_DRIP_ENABLED=true
 WORKOUT_DRIP_TRIGGER_TAGS=WORKOUT
 WORKOUT_DRIP_STOP_TAGS=CWOS
 WORKOUT_DRIP_STEP_OFFSETS=0
-WORKOUT_DRIP_TEMPLATE_1=workout_batch_oct14
+WORKOUT_DRIP_TEMPLATE_1=workout_batch_broucher_oct23
 WORKOUT_DRIP_TEMPLATE_PARAMS_1=name
 WORKOUT_DRIP_QUIET_START_IST=0
 WORKOUT_DRIP_QUIET_END_IST=0
